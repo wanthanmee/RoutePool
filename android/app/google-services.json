@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "428362340196",
+    "project_id": "routepool-9405b",
+    "storage_bucket": "routepool-9405b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:428362340196:android:47b3bfaed1a8bdafbb8c71",
+        "android_client_info": {
+          "package_name": "com.example.routepool"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB6TBQA6G0wRn0mDwVOzcuOwm_njOrot-o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:428362340196:android:000354a983422b4abb8c71",
+        "android_client_info": {
+          "package_name": "com.example.routepool_admin"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB6TBQA6G0wRn0mDwVOzcuOwm_njOrot-o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

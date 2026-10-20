@@ -1,0 +1,535 @@
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+class RideMatchingScreen extends StatefulWidget {
+  final String requestId;
+
+  const RideMatchingScreen({super.key, required this.requestId});
+
+  @override
+  State<RideMatchingScreen> createState() => _RideMatchingScreenState();
+}
+
+class _RideMatchingScreenState extends State<RideMatchingScreen> {
+  static const Color teal = Color(0xFF0F5C5F);
+  static const Color orange = Color(0xFFF5A623);
+
+  static const int maxGroupPassengers = 4;
+  static const int maxDepartureDifferenceMinutes = 30;
+  static const double maxDestinationDistanceKm = 5.0;
+
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  bool _isLoading = false;
+  int _stage = 0;
+
+  String? _errorMessage;
+  String? _pickupName;
+  String? _dropoffAddress;
+  DateTime? _departureTime;
+
+  List<Map<String, dynamic>> _compatiblePassengers = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRideRequest();
+  }
+
+  Future<void> _loadRideRequest() async {
+    try {
+      final doc = await _firestore
+          .collection('ride_requests')
+          .doc(widget.requestId)
+          .get();
+
+      if (!mounted) return;
+
+      if (!doc.exists) {
+        setState(() {
+          _errorMessage = 'Ride request could not be found.';
+        });
+        return;
+      }
+
+      final data = doc.data()!;
+      final departure = data['departureTime'];
+
+      setState(() {
+        _pickupName = data['pickupName'] as String? ?? 'Pickup hub';
+        _dropoffAddress = data['dropoffAddress'] as String? ?? 'Destination';
+        _departureTime = departure is Timestamp ? departure.toDate() : null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'Unable to load your ride request.';
+      });
+    }
+  }
+
+  Future<void> _findPassengers() async {
+    if (_isLoading) return;
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+      _compatiblePassengers = [];
+    });
+
+    try {
+      final currentDoc = await _firestore
+          .collection('ride_requests')
+          .doc(widget.requestId)
+          .get();
+
+      if (!currentDoc.exists) {
+        throw Exception('Ride request could not be found.');
+      }
+
+      final current = currentDoc.data()!;
+      final departure = current['departureTime'];
+
+      if (departure is! Timestamp) {
+        throw Exception('The departure time is missing.');
+      }
+
+      final currentDeparture = departure.toDate();
+      final pickupHubId = current['pickupHubId'];
+      final passengerId = current['passengerId'];
+
+      // Read the current passenger's destination and passenger count.
+      final currentDropoffLat = (current['dropoffLat'] as num?)?.toDouble();
+      final currentDropoffLon = (current['dropoffLon'] as num?)?.toDouble();
+      final currentPassengerCount = (current['passengerCount'] as num?)
+          ?.toInt();
+
+      if (currentDropoffLat == null ||
+          currentDropoffLon == null ||
+          currentPassengerCount == null) {
+        throw Exception('Your destination or passenger count is missing.');
+      }
+
+      if (currentPassengerCount < 1 ||
+          currentPassengerCount > maxGroupPassengers) {
+        throw Exception(
+          'Your passenger count exceeds the supported group capacity.',
+        );
+      }
+
+      // Find other searching requests from the same pickup hub.
+      final results = await _firestore
+          .collection('ride_requests')
+          .where('pickupHubId', isEqualTo: pickupHubId)
+          .where('status', isEqualTo: 'searching')
+          .get();
+
+      final matches = <Map<String, dynamic>>[];
+      var totalPassengers = currentPassengerCount;
+
+      for (final doc in results.docs) {
+        // Exclude the current request.
+        if (doc.id == widget.requestId) continue;
+
+        final data = doc.data();
+
+        // Exclude requests made by the same passenger.
+        if (data['passengerId'] == passengerId) continue;
+
+        final otherDeparture = data['departureTime'];
+        if (otherDeparture is! Timestamp) continue;
+
+        final otherLat = (data['dropoffLat'] as num?)?.toDouble();
+        final otherLon = (data['dropoffLon'] as num?)?.toDouble();
+        final otherPassengerCount = (data['passengerCount'] as num?)?.toInt();
+
+        // Ignore requests with missing or invalid data.
+        if (otherLat == null ||
+            otherLon == null ||
+            otherPassengerCount == null ||
+            otherPassengerCount < 1) {
+          continue;
+        }
+
+        // Check departure-time compatibility.
+        final difference = otherDeparture
+            .toDate()
+            .difference(currentDeparture)
+            .inMinutes
+            .abs();
+
+        if (difference > maxDepartureDifferenceMinutes) {
+          continue;
+        }
+
+        // Check how close the two destinations are.
+        final distanceKm = _calculateDistanceKm(
+          currentDropoffLat,
+          currentDropoffLon,
+          otherLat,
+          otherLon,
+        );
+
+        if (distanceKm > maxDestinationDistanceKm) {
+          continue;
+        }
+
+        // Check whether the group would exceed its capacity.
+        if (totalPassengers + otherPassengerCount > maxGroupPassengers) {
+          continue;
+        }
+
+        // Add the compatible request.
+        matches.add({
+          'id': doc.id,
+          ...data,
+          'destinationDistanceKm': distanceKm,
+        });
+
+        totalPassengers += otherPassengerCount;
+
+        if (totalPassengers >= maxGroupPassengers) {
+          break;
+        }
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _compatiblePassengers = matches;
+        _stage = 1;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _errorMessage = e.toString().replaceFirst('Exception: ', '');
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  double _calculateDistanceKm(
+    double lat1,
+    double lon1,
+    double lat2,
+    double lon2,
+  ) {
+    const earthRadiusKm = 6371.0;
+
+    final dLat = (lat2 - lat1) * math.pi / 180;
+    final dLon = (lon2 - lon1) * math.pi / 180;
+
+    final lat1Rad = lat1 * math.pi / 180;
+    final lat2Rad = lat2 * math.pi / 180;
+
+    final a =
+        math.pow(math.sin(dLat / 2), 2) +
+        math.cos(lat1Rad) * math.cos(lat2Rad) * math.pow(math.sin(dLon / 2), 2);
+
+    final safeA = a.toDouble().clamp(0.0, 1.0);
+
+    return earthRadiusKm *
+        2 *
+        math.atan2(math.sqrt(safeA), math.sqrt(1.0 - safeA));
+  }
+
+  Future<void> _continueToDriverMatching() async {
+    if (_isLoading) return;
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await _firestore.collection('ride_requests').doc(widget.requestId).update(
+        {
+          'status': 'matching_driver',
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+      );
+
+      if (!mounted) return;
+
+      setState(() => _stage = 2);
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _errorMessage = 'Could not update your ride request. Please try again.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Widget _buildStage(int number, String title, String subtitle) {
+    final isComplete = _stage > number;
+    final isCurrent = _stage == number;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        CircleAvatar(
+          radius: 19,
+          backgroundColor: isComplete || isCurrent
+              ? teal
+              : Colors.grey.shade300,
+          child: Icon(
+            isComplete ? Icons.check : Icons.circle,
+            size: isComplete ? 21 : 10,
+            color: Colors.white,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: isCurrent || isComplete ? teal : Colors.black54,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: const TextStyle(color: Colors.black54, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF6F7F8),
+      appBar: AppBar(
+        title: const Text('Finding Your Ride'),
+        backgroundColor: Colors.white,
+        foregroundColor: teal,
+        elevation: 0,
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: teal,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.alt_route, color: Colors.white, size: 34),
+                SizedBox(height: 12),
+                Text(
+                  'Your RoutePool journey',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 21,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: 6),
+                Text(
+                  'We will look for compatible passengers first, '
+                  'then proceed to driver matching.',
+                  style: TextStyle(color: Colors.white70, height: 1.4),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'YOUR TRIP',
+                  style: TextStyle(
+                    color: teal,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.trip_origin, color: teal),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(_pickupName ?? 'Loading pickup...')),
+                  ],
+                ),
+                const Padding(
+                  padding: EdgeInsets.only(left: 11),
+                  child: SizedBox(
+                    height: 24,
+                    child: VerticalDivider(color: Colors.grey, thickness: 1.5),
+                  ),
+                ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.location_on, color: Colors.red),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(_dropoffAddress ?? 'Loading destination...'),
+                    ),
+                  ],
+                ),
+                if (_departureTime != null) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    'Departure: ${MaterialLocalizations.of(context).formatFullDate(_departureTime!)} '
+                    'at ${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(_departureTime!))}',
+                    style: const TextStyle(color: Colors.black54, fontSize: 12),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              children: [
+                _buildStage(
+                  0,
+                  '1. Passenger matching',
+                  'Look for requests with the same pickup hub '
+                      'and a similar departure time.',
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 18),
+                  child: Divider(),
+                ),
+                _buildStage(
+                  1,
+                  '2. Driver matching',
+                  'Proceed to finding an available driver.',
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 18),
+                  child: Divider(),
+                ),
+                _buildStage(
+                  2,
+                  '3. GPS navigation',
+                  'Display the trip route after a driver '
+                      'has actually been assigned.',
+                ),
+              ],
+            ),
+          ),
+          if (_errorMessage != null) ...[
+            const SizedBox(height: 16),
+            Text(_errorMessage!, style: const TextStyle(color: Colors.red)),
+          ],
+          const SizedBox(height: 18),
+          if (_stage == 0)
+            SizedBox(
+              height: 52,
+              child: ElevatedButton(
+                onPressed: _isLoading ? null : _findPassengers,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: teal,
+                  foregroundColor: Colors.white,
+                ),
+                child: _isLoading
+                    ? const CircularProgressIndicator(color: Colors.white)
+                    : const Text('Find Compatible Passengers'),
+              ),
+            ),
+          if (_stage == 1) ...[
+            Text(
+              _compatiblePassengers.isEmpty
+                  ? 'No compatible passenger requests were found yet.'
+                  : '${_compatiblePassengers.length} potentially compatible '
+                        'passenger request(s) found.',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'These are preliminary matches based on pickup hub and '
+              'departure time. Route similarity and available seats '
+              'still need to be checked before grouping passengers.',
+              style: TextStyle(color: Colors.black54, fontSize: 12),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 52,
+              child: ElevatedButton(
+                onPressed: _isLoading ? null : _continueToDriverMatching,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: teal,
+                  foregroundColor: Colors.white,
+                ),
+                child: _isLoading
+                    ? const CircularProgressIndicator(color: Colors.white)
+                    : const Text('Continue to Driver Matching'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton(
+              onPressed: _isLoading ? null : _findPassengers,
+              child: const Text('Search Again'),
+            ),
+          ],
+          if (_stage == 2) ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF4DE),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.info_outline, color: orange),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Your request is now marked as matching_driver. '
+                      'Actual driver discovery and assignment still need '
+                      'to be connected. GPS navigation will be available '
+                      'after a driver and trip route are confirmed.',
+                      style: TextStyle(height: 1.4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
