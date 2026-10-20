@@ -392,7 +392,6 @@ class _HubScreenState extends State<HubScreen> {
               setState(() {
                 _myLocation = LatLng(position.latitude, position.longitude);
 
-                // Use GPS movement direction only if compass heading is unavailable.
                 if (!_hasCompassHeading &&
                     position.speed > 0.8 &&
                     position.heading.isFinite &&
@@ -895,37 +894,34 @@ class _HubScreenState extends State<HubScreen> {
           // ---- Bottom overlay: hub card ----
           // Hidden while the keyboard is open since it isn't useful mid-search
           // and would otherwise fight the keyboard for space.
-          // ---- Draggable Bus Stop bottom sheet ----
-          if (MediaQuery.of(context).viewInsets.bottom == 0)
-            DraggableScrollableSheet(
-              initialChildSize: 0.30,
-              minChildSize: 0.12,
-              maxChildSize: 0.78,
-              expand: false,
-              snap: true,
-              snapSizes: const [0.12, 0.30, 0.78],
-              builder: (context, scrollController) {
-                return SafeArea(
-                  top: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                    child: _buildHubCard(scrollController: scrollController),
-                  ),
-                );
-              },
-            ),
-
           if (MediaQuery.of(context).viewInsets.bottom == 0)
             Positioned(
-              right: 16,
-              top: 84,
-              child: FloatingActionButton.small(
-                heroTag: 'my_location_fab',
-                onPressed: _centerOnMe,
-                backgroundColor: Colors.white,
-                foregroundColor: _primary,
-                tooltip: 'My location',
-                child: const Icon(Icons.my_location),
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: FloatingActionButton.small(
+                          heroTag: 'my_location_fab',
+                          onPressed: _centerOnMe,
+                          backgroundColor: Colors.white,
+                          foregroundColor: _primary,
+                          tooltip: 'My location',
+                          child: const Icon(Icons.my_location),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _buildHubCard(),
+                    ],
+                  ),
+                ),
               ),
             ),
           if (_isLoading)
@@ -1255,7 +1251,7 @@ class _HubScreenState extends State<HubScreen> {
   // ------------------------------------------------------------
   // HUB CARD
   // ------------------------------------------------------------
-  Widget _buildHubCard({required ScrollController scrollController}) {
+  Widget _buildHubCard() {
     final Hub? hub = _selectedHub ?? _nearestHub;
     if (hub == null) {
       return Material(
@@ -1286,223 +1282,220 @@ class _HubScreenState extends State<HubScreen> {
           color: Colors.white,
           borderRadius: BorderRadius.circular(18),
         ),
-        child: SingleChildScrollView(
-          controller: scrollController,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Drag handle
-              Center(
-                child: Container(
-                  width: 42,
-                  height: 5,
-                  margin: const EdgeInsets.only(bottom: 14),
-                  decoration: BoxDecoration(
-                    color: Colors.black26,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-              Row(
-                children: [
-                  const Icon(Icons.location_on, color: _primary, size: 18),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _selectedHub != null
-                          ? 'Selected Bus Stop'
-                          : 'Nearest Bus Stop',
-                      style: const TextStyle(
-                        color: _primary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  if (_myLocation != null)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _primary.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.30,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.location_on, color: _primary, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
                       child: Text(
-                        _formatDistance(_distanceToHub(hub)),
+                        _selectedHub != null
+                            ? 'Selected Bus Stop'
+                            : 'Nearest Bus Stop',
                         style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
                           color: _primary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Text(
-                hub.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
+                    if (_myLocation != null)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _primary.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          _formatDistance(_distanceToHub(hub)),
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: _primary,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                hub.address,
-                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              if (_guidingHub?.id == hub.id && _nextInstruction != null) ...[
-                const SizedBox(height: 14),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: _primary.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: _primary.withValues(alpha: 0.18)),
+                const SizedBox(height: 10),
+                Text(
+                  hub.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
                   ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  hub.address,
+                  style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (_guidingHub?.id == hub.id && _nextInstruction != null) ...[
+                  const SizedBox(height: 14),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: _primary.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: _primary.withValues(alpha: 0.18),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.directions_walk,
+                          color: _primary,
+                          size: 28,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Walking directions',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: _primary,
+                                ),
+                              ),
+                              const SizedBox(height: 5),
+                              Text(
+                                _nextInstruction!,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              if (_distanceToNextTurnM != null) ...[
+                                const SizedBox(height: 5),
+                                Text(
+                                  '${_formatDistance(_distanceToNextTurnM!)} until next instruction',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey.shade700,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+
+                if (_guidingHub?.id == hub.id && _routeDistanceM != null) ...[
+                  const SizedBox(height: 8),
+                  Row(
                     children: [
                       const Icon(
                         Icons.directions_walk,
+                        size: 16,
                         color: _primary,
-                        size: 28,
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Walking directions',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: _primary,
-                              ),
-                            ),
-                            const SizedBox(height: 5),
-                            Text(
-                              _nextInstruction!,
-                              style: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            if (_distanceToNextTurnM != null) ...[
-                              const SizedBox(height: 5),
-                              Text(
-                                '${_formatDistance(_distanceToNextTurnM!)} until next instruction',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey.shade700,
-                                ),
-                              ),
-                            ],
-                          ],
+                      const SizedBox(width: 6),
+                      Text(
+                        '${_formatDistance(_routeDistanceM!)} · '
+                        '${_formatDuration(_routeDurationS!)} walk',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: _primary,
                         ),
                       ),
                     ],
                   ),
-                ),
-              ],
-
-              if (_guidingHub?.id == hub.id && _routeDistanceM != null) ...[
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.directions_walk,
-                      size: 16,
-                      color: _primary,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      '${_formatDistance(_routeDistanceM!)} · '
-                      '${_formatDuration(_routeDurationS!)} walk',
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: _primary,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-              const SizedBox(height: 16),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final bool isNarrow = constraints.maxWidth < 320;
-                  final bool isGuiding = _guidingHub?.id == hub.id;
-                  final guideButton = _HubActionButton(
-                    onPressed: () =>
-                        isGuiding ? _stopGuiding() : _guideMeToHub(hub),
-                    icon: isGuiding ? Icons.close : Icons.directions_walk,
-                    label: isGuiding ? 'Stop' : 'Guide me',
-                    color: isGuiding ? Colors.red.shade600 : _primary,
-                  );
-                  if (widget.isDriver) {
-                    return SizedBox(width: double.infinity, child: guideButton);
-                  }
-                  final bookButton = _HubActionButton(
-                    onPressed: () {
-                      // Explicitly selected hub takes priority.
-                      // If none is selected, use the nearest hub.
-                      final Hub? pickupHub = _selectedHub ?? _nearestHub;
-                      if (pickupHub == null) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'No pickup hub available. Please select a bus stop.',
+                ],
+                const SizedBox(height: 16),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final bool isNarrow = constraints.maxWidth < 320;
+                    final bool isGuiding = _guidingHub?.id == hub.id;
+                    final guideButton = _HubActionButton(
+                      onPressed: () =>
+                          isGuiding ? _stopGuiding() : _guideMeToHub(hub),
+                      icon: isGuiding ? Icons.close : Icons.directions_walk,
+                      label: isGuiding ? 'Stop' : 'Guide me',
+                      color: isGuiding ? Colors.red.shade600 : _primary,
+                    );
+                    if (widget.isDriver) {
+                      return SizedBox(
+                        width: double.infinity,
+                        child: guideButton,
+                      );
+                    }
+                    final bookButton = _HubActionButton(
+                      onPressed: () {
+                        // Explicitly selected hub takes priority.
+                        // If none is selected, use the nearest hub.
+                        final Hub? pickupHub = _selectedHub ?? _nearestHub;
+                        if (pickupHub == null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'No pickup hub available. Please select a bus stop.',
+                              ),
+                            ),
+                          );
+                          return;
+                        }
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => BookRideScreen(
+                              pickupHubId: pickupHub.id,
+                              pickupName: pickupHub.name,
+                              pickupAddress: pickupHub.address,
+                              pickupLat: pickupHub.lat,
+                              pickupLon: pickupHub.lon,
                             ),
                           ),
                         );
-                        return;
-                      }
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => BookRideScreen(
-                            pickupHubId: pickupHub.id,
-                            pickupName: pickupHub.name,
-                            pickupAddress: pickupHub.address,
-                            pickupLat: pickupHub.lat,
-                            pickupLon: pickupHub.lon,
-                          ),
-                        ),
+                      },
+                      icon: Icons.book_online,
+                      label: 'Book from here',
+                      color: _secondary,
+                    );
+                    if (isNarrow) {
+                      return Column(
+                        children: [
+                          SizedBox(width: double.infinity, child: guideButton),
+                          const SizedBox(height: 10),
+                          SizedBox(width: double.infinity, child: bookButton),
+                        ],
                       );
-                    },
-                    icon: Icons.book_online,
-                    label: 'Book from here',
-                    color: _secondary,
-                  );
-                  if (isNarrow) {
-                    return Column(
+                    }
+                    return Row(
                       children: [
-                        SizedBox(width: double.infinity, child: guideButton),
-                        const SizedBox(height: 10),
-                        SizedBox(width: double.infinity, child: bookButton),
+                        Expanded(child: guideButton),
+                        const SizedBox(width: 10),
+                        Expanded(child: bookButton),
                       ],
                     );
-                  }
-                  return Row(
-                    children: [
-                      Expanded(child: guideButton),
-                      const SizedBox(width: 10),
-                      Expanded(child: bookButton),
-                    ],
-                  );
-                },
-              ),
-            ],
+                  },
+                ),
+              ],
+            ),
           ),
         ),
       ),
