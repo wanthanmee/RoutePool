@@ -1,13 +1,19 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 import 'passenger_home.dart' show RPColors;
 
 import 'driver_notifications_screen.dart';
 import 'driver_ride_screen.dart';
+import '../services/driver_trip_service.dart';
+import '../services/driver_location_service.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+/// Summary details for a ride request shown to a driver.
 class IncomingRideRequest {
   const IncomingRideRequest({
     required this.passengerName,
@@ -26,7 +32,9 @@ class IncomingRideRequest {
   final String dropoff;
 }
 
+/// Displays the driver's earnings, ride activity, and availability controls.
 class DriverDashboardScreen extends StatefulWidget {
+  /// Creates a dashboard with optional summary values and an incoming request.
   const DriverDashboardScreen({
     super.key,
     this.driverName = 'Alex',
@@ -55,17 +63,146 @@ class DriverDashboardScreen extends StatefulWidget {
   State<DriverDashboardScreen> createState() => _DriverDashboardScreenState();
 }
 
+/// Loads driver availability and handles online status changes.
 class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   bool isOnline = false;
   bool _isLoadingAvailability = true;
   bool _isUpdatingAvailability = false;
+  bool _isSyncingAvailability = false;
+  bool? _latestFirestoreAvailability;
+  bool _availabilitySyncPending = false;
+
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+  _availabilitySubscription;
 
   @override
   void initState() {
     super.initState();
-    _loadAvailability();
+    _listenToAvailability();
   }
 
+  void _listenToAvailability() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      if (mounted) setState(() => _isLoadingAvailability = false);
+      return;
+    }
+
+    _availabilitySubscription = FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .snapshots()
+        .listen(
+          (snapshot) {
+            if (!mounted) return;
+            _latestFirestoreAvailability =
+                snapshot.exists && snapshot.data()?['isAvailable'] == true;
+            _availabilitySyncPending = true;
+            _syncAvailability();
+          },
+          onError: (Object error) {
+            debugPrint('Driver availability listener error: $error');
+            if (mounted) {
+              setState(() => _isLoadingAvailability = false);
+            }
+          },
+        );
+  }
+
+  /// Serializes Firestore-driven GPS changes and handles newer snapshots.
+  Future<void> _syncAvailability() async {
+    if (!mounted || _isSyncingAvailability || _isUpdatingAvailability) return;
+    if (_latestFirestoreAvailability == null) return;
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    _isSyncingAvailability = true;
+    if (mounted) setState(() {});
+
+    try {
+      while (mounted && _availabilitySyncPending && !_isUpdatingAvailability) {
+        _availabilitySyncPending = false;
+        final available = _latestFirestoreAvailability == true;
+
+        if (available) {
+          try {
+            await DriverLocationService.instance.startTracking(user.uid);
+            if (!mounted) return;
+            if (_latestFirestoreAvailability != true) {
+              _availabilitySyncPending = true;
+              continue;
+            }
+            setState(() {
+              isOnline = true;
+              _isLoadingAvailability = false;
+            });
+          } catch (error) {
+            debugPrint('Could not start driver GPS: $error');
+            if (!mounted) return;
+            if (_latestFirestoreAvailability != true) {
+              _availabilitySyncPending = true;
+              continue;
+            }
+            try {
+              await FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(user.uid)
+                  .update({
+                    'isAvailable': false,
+                    'updatedAt': FieldValue.serverTimestamp(),
+                  });
+            } catch (updateError) {
+              debugPrint('Could not set driver offline: $updateError');
+            }
+            if (!mounted) return;
+            _latestFirestoreAvailability = false;
+            _availabilitySyncPending = true;
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'GPS is unavailable. You have been switched offline.',
+                ),
+              ),
+            );
+          }
+        } else {
+          await DriverLocationService.instance.stopTracking();
+          if (!mounted) return;
+          if (_latestFirestoreAvailability != false) {
+            _availabilitySyncPending = true;
+            continue;
+          }
+          setState(() {
+            isOnline = false;
+            _isLoadingAvailability = false;
+          });
+        }
+      }
+    } catch (error) {
+      debugPrint('Driver availability sync error: $error');
+    } finally {
+      _isSyncingAvailability = false;
+      if (mounted) {
+        setState(() => _isLoadingAvailability = false);
+        if (_availabilitySyncPending && !_isUpdatingAvailability) {
+          // Schedule another pass rather than recursively running in finally.
+          scheduleMicrotask(_syncAvailability);
+        }
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _availabilitySubscription?.cancel();
+    super.dispose();
+  }
+
+  /// Returns an explanation when the account or vehicle cannot go online.
+  ///
+  /// Returns `null` when the driver's account and vehicle meet the
+  /// requirements for becoming available.
   Future<String?> _getOnlineBlockReason(String uid) async {
     final firestore = FirebaseFirestore.instance;
 
@@ -121,44 +258,12 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
     return null;
   }
 
-  Future<void> _loadAvailability() async {
-    final user = FirebaseAuth.instance.currentUser;
-
-    if (user == null) {
-      if (mounted) {
-        setState(() => _isLoadingAvailability = false);
-      }
+  Future<void> _updateAvailability(bool value) async {
+    if (_isLoadingAvailability ||
+        _isUpdatingAvailability ||
+        _isSyncingAvailability) {
       return;
     }
-
-    try {
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-
-      if (!mounted) return;
-
-      setState(() {
-        isOnline = doc.data()?['isAvailable'] == true;
-      });
-    } catch (e) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Could not load your availability status.'),
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _isLoadingAvailability = false);
-      }
-    }
-  }
-
-  Future<void> _updateAvailability(bool value) async {
-    if (_isLoadingAvailability || _isUpdatingAvailability) return;
 
     final user = FirebaseAuth.instance.currentUser;
 
@@ -170,20 +275,20 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
 
     setState(() => _isUpdatingAvailability = true);
 
-    try {
-      final userRef = FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid);
+    final userRef = FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid);
 
-      // Only check eligibility when switching ONLINE.
-      // A driver must always be able to switch OFFLINE.
+    try {
+      // STEP 1: Check eligibility before going ONLINE.
       if (value) {
         final blockReason = await _getOnlineBlockReason(user.uid);
 
         if (!mounted) return;
 
         if (blockReason != null) {
-          // Also try to clear any stale online state.
+          await DriverLocationService.instance.stopTracking();
+
           await userRef.update({
             'isAvailable': false,
             'updatedAt': FieldValue.serverTimestamp(),
@@ -191,21 +296,36 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
 
           if (!mounted) return;
 
-          setState(() {
-            isOnline = false;
-          });
+          setState(() => isOnline = false);
 
           ScaffoldMessenger.of(context)
               .showSnackBar(SnackBar(content: Text(blockReason)));
 
           return;
         }
-      }
 
-      await userRef.update({
-        'isAvailable': value,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+        // STEP 2: Start GPS tracking before becoming available.
+        await DriverLocationService.instance.startTracking(user.uid);
+
+        // STEP 3: Set ONLINE only after GPS starts successfully.
+        try {
+          await userRef.update({
+            'isAvailable': true,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        } catch (_) {
+          await DriverLocationService.instance.stopTracking();
+          rethrow;
+        }
+      } else {
+        // STEP 4: Switch OFFLINE before stopping GPS tracking.
+        await userRef.update({
+          'isAvailable': false,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        await DriverLocationService.instance.stopTracking();
+      }
 
       if (!mounted) return;
 
@@ -224,21 +344,27 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Could not update availability. Please try again.'),
-        ),
+        SnackBar(content: Text('Could not update availability: $e')),
       );
     } finally {
       if (mounted) {
         setState(() => _isUpdatingAvailability = false);
+        if (_availabilitySyncPending) _syncAvailability();
       }
     }
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> _getIncomingRequests() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+
+    if (uid == null) {
+      return const Stream.empty();
+    }
+
     return FirebaseFirestore.instance
         .collection('trips')
         .where('status', isEqualTo: 'matching_driver')
+        .where('offeredDriverId', isEqualTo: uid)
         .snapshots();
   }
 
@@ -302,7 +428,6 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                     alignment: Alignment.centerRight,
                     child: TextButton(
                       onPressed: () {
-                        setState(() => isOnline = false);
                         _updateAvailability(false);
                       },
                       child: const Text('Go offline'),
@@ -376,14 +501,6 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                 final fareText = 'RM ${(fareSen / 100).toStringAsFixed(2)}';
 
                 final dropoff = 'Trip with $passengers passenger(s)';
-
-                final departure = data['departureTime'];
-
-                final departureText = departure is Timestamp
-                    ? MaterialLocalizations.of(context).formatTimeOfDay(
-                        TimeOfDay.fromDateTime(departure.toDate()),
-                      )
-                    : 'Not specified';
 
                 return Card(
                   margin: const EdgeInsets.only(bottom: 12),
@@ -529,33 +646,51 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                             ],
                           ),
                           const Divider(height: 26),
-                          Row(
+
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Icon(
-                                Icons.people_outline,
-                                size: 20,
-                                color: RPColors.teal,
+                              // First row: Passenger count and fare.
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.people_outline,
+                                    size: 20,
+                                    color: RPColors.teal,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      '$passengers passenger(s)',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(width: 6),
-                              Text('$passengers passenger(s)'),
-                              const Spacer(),
-                              Text(
-                                fareText,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: RPColors.teal,
-                                ),
+
+                              const SizedBox(height: 10),
+
+                              // Second row: Departure time.
+                              const Row(
+                                children: [
+                                  Icon(
+                                    Icons.access_time,
+                                    size: 18,
+                                    color: RPColors.teal,
+                                  ),
+                                  SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      'As Soon as Possible',
+                                      softWrap: true,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(width: 8),
-                              const Icon(
-                                Icons.access_time,
-                                size: 18,
-                                color: RPColors.teal,
-                              ),
-                              const SizedBox(width: 5),
-                              Text(departureText),
                             ],
                           ),
+
                           const SizedBox(height: 16),
                           Row(
                             children: [
@@ -633,118 +768,9 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
     }
 
     try {
-      final firestore = FirebaseFirestore.instance;
-      String? linkedRequestId;
+      final requestIds = await DriverTripService().acceptTrip(tripId);
 
-      await firestore.runTransaction((transaction) async {
-        final tripRef = firestore.collection('trips').doc(tripId);
-        final driverRef = firestore.collection('users').doc(user.uid);
-        final vehicleRef = firestore.collection('vehicles').doc(user.uid);
-
-        // Read the trip, driver, and vehicle first.
-        final tripSnapshot = await transaction.get(tripRef);
-        final driverSnapshot = await transaction.get(driverRef);
-        final vehicleSnapshot = await transaction.get(vehicleRef);
-
-        if (!tripSnapshot.exists) {
-          throw Exception('This trip no longer exists.');
-        }
-
-        if (!driverSnapshot.exists) {
-          throw Exception('Your driver profile could not be found.');
-        }
-
-        final tripData = tripSnapshot.data()!;
-        final driverData = driverSnapshot.data()!;
-        final vehicleData = vehicleSnapshot.data();
-
-        if (tripData['status'] != 'matching_driver' ||
-            tripData['driverId'] != null) {
-          throw Exception('This trip has already been taken.');
-        }
-
-        if (driverData['verificationStatus'] != 'approved') {
-          throw Exception('Your driver account has not been approved.');
-        }
-
-        if (driverData['isAvailable'] != true) {
-          throw Exception('You must be online to accept a trip.');
-        }
-
-        if (!vehicleSnapshot.exists ||
-            vehicleData?['verificationStatus'] != 'approved' ||
-            vehicleData?['isActive'] != true) {
-          throw Exception(
-            'Your vehicle must be active and approved before accepting trips.',
-          );
-        }
-
-        final requestIds = List<String>.from(
-          tripData['requestIds'] ?? <String>[],
-        );
-
-        if (requestIds.isEmpty) {
-          throw Exception('This trip has no linked passenger requests.');
-        }
-
-        linkedRequestId = requestIds.first;
-
-        // Read every linked request before making any transaction writes.
-        final requestSnapshots = <DocumentSnapshot<Map<String, dynamic>>>[];
-
-        for (final requestId in requestIds) {
-          final requestRef = firestore
-              .collection('ride_requests')
-              .doc(requestId);
-
-          requestSnapshots.add(await transaction.get(requestRef));
-        }
-
-        // Validate every linked request before assigning the trip.
-        for (final requestSnapshot in requestSnapshots) {
-          if (!requestSnapshot.exists) {
-            throw Exception(
-              'A passenger request linked to this trip could not be found.',
-            );
-          }
-
-          final requestData = requestSnapshot.data()!;
-
-          if (requestData['status'] != 'matching_driver' ||
-              requestData['driverId'] != null) {
-            throw Exception(
-              'A linked passenger request is no longer available.',
-            );
-          }
-
-          if (requestData['groupId'] != tripId) {
-            throw Exception(
-              'A passenger request is linked to a different trip.',
-            );
-          }
-        }
-
-        final now = FieldValue.serverTimestamp();
-
-        // Assign the driver to the trip itself.
-        transaction.update(tripRef, {
-          'driverId': user.uid,
-          'status': 'driver_assigned',
-          'updatedAt': now,
-        });
-
-        // Keep the driver unavailable while assigned to this trip.
-        transaction.update(driverRef, {'isAvailable': false, 'updatedAt': now});
-
-        // Synchronize every passenger request belonging to this trip.
-        for (final requestSnapshot in requestSnapshots) {
-          transaction.update(requestSnapshot.reference, {
-            'driverId': user.uid,
-            'status': 'driver_assigned',
-            'updatedAt': now,
-          });
-        }
-      });
+      await DriverLocationService.instance.stopTracking();
 
       if (!context.mounted) return;
 
@@ -754,26 +780,17 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
         const SnackBar(content: Text('Trip accepted successfully!')),
       );
 
-      if (linkedRequestId == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Trip accepted, but the passenger request ID could not be found.',
-            ),
-          ),
-        );
-        return;
-      }
-
       Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => DriverRideScreen(requestId: linkedRequestId),
+          builder: (_) => DriverRideScreen(requestId: requestIds.first),
         ),
       );
     } catch (e) {
       if (!context.mounted) return;
 
-      final message = e.toString().replaceFirst('Exception: ', '');
+      final message = e is FirebaseFunctionsException
+          ? e.message ?? 'Could not accept this trip.'
+          : e.toString().replaceFirst('Exception: ', '');
 
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(message)));
@@ -783,17 +800,31 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   Future<void> _declineTrip(BuildContext context, String tripId) async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
 
-    if (uid == null) return;
+    if (uid == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Please sign in again.')));
+      return;
+    }
 
     try {
-      await FirebaseFirestore.instance.collection('trips').doc(tripId).update({
-        'dismissedBy': FieldValue.arrayUnion([uid]),
-      });
+      await DriverTripService().declineTrip(tripId);
+
+      if (!context.mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Trip declined. Searching for another driver.'),
+        ),
+      );
     } catch (e) {
       if (!context.mounted) return;
 
+      final message = e is FirebaseFunctionsException
+          ? e.message ?? 'Could not decline this trip.'
+          : e.toString().replaceFirst('Exception: ', '');
+
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Could not dismiss trip: $e')));
+          .showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
@@ -860,7 +891,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
           ),
         ),
         StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: _getIncomingRequests(),
+          stream: isOnline ? _getIncomingRequests() : null,
           builder: (context, snapshot) {
             final currentUserId = FirebaseAuth.instance.currentUser?.uid;
             final allRequests = snapshot.data?.docs ?? [];
@@ -905,7 +936,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                       Icons.notifications_none,
                       color: RPColors.textDark,
                     ),
-                    if (count > 0)
+                    if (isOnline && count > 0)
                       Positioned(
                         right: -7,
                         top: -7,
@@ -971,7 +1002,10 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
     required bool offline,
   }) {
     return GestureDetector(
-      onTap: (_isLoadingAvailability || _isUpdatingAvailability)
+      onTap:
+          (_isLoadingAvailability ||
+              _isUpdatingAvailability ||
+              _isSyncingAvailability)
           ? null
           : () => _updateAvailability(!offline),
       child: Container(
@@ -1033,14 +1067,17 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                 ),
               ),
               const SizedBox(width: 8),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  '+${widget.earningsChangePercent}% vs yesterday',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: Colors.green,
-                    fontWeight: FontWeight.w600,
+              Flexible(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '+${widget.earningsChangePercent}% vs yesterday',
+                    softWrap: true,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Colors.green,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),

@@ -1,8 +1,7 @@
-// Shared shape for a signed-in user's Firestore data, used by
-// PassengerHomeScreen, DriverDashboardScreen, and ProfileScreen so each
-// account shows its own real name/phone/role instead of hardcoded mock
-// values. Fetched once at login (see login_screen.dart) and passed down.
-
+/// Typed view of a signed-in user's Firestore profile.
+///
+/// The profile is loaded during login and passed to screens that need
+/// account-specific identity, role, verification, and photo information.
 class AppUserProfile {
   const AppUserProfile({
     required this.uid,
@@ -14,9 +13,16 @@ class AppUserProfile {
     this.profilePic = '',
   });
 
+  /// Firestore user document ID and Firebase Authentication UID.
   final String uid;
+
+  /// Display name stored in the user's profile.
   final String name;
+
+  /// Email address associated with the account.
   final String email;
+
+  /// Phone number associated with the account.
   final String phoneNo;
 
   /// 'passenger' or 'driver', lowercased.
@@ -46,6 +52,10 @@ class AppUserProfile {
         : const ['IC Verified'];
   }
 
+  /// Creates a profile from the fields stored in a Firestore user document.
+  ///
+  /// Missing or malformed optional profile values are replaced with the
+  /// defaults used by the app.
   factory AppUserProfile.fromFirestore(String uid, Map<String, dynamic> data) {
     return AppUserProfile(
       uid: uid,

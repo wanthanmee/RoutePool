@@ -65,3 +65,23 @@ app.*.map.json
 
 # Local IDE settings
 .vscode/
+
+# Firebase local files
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+firestore-debug.log
+ui-debug.log
+
+# Additional private credentials
+*service-account*.json
+*service_account*.json
+*.pem
+*.p12
+
+# Local backups
+/backup_code/
+
+# Temporary patches
+*.patch
+*.diff

@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/material.dart';
+
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
 /// Class: DocumentVerificationResult
@@ -52,14 +54,20 @@ class DocumentVerificationService {
     final idNumber = _findIdNumber(extractedText);
 
     // Check for expiration date if requested
+
     DateTime? expiryDate;
     bool isExpired = false;
+
     if (checkExpiry) {
       expiryDate = _findLatestDate(extractedText);
+
+      final today = DateUtils.dateOnly(DateTime.now());
+
       if (expiryDate != null) {
-        isExpired = expiryDate.isBefore(DateTime.now());
+        isExpired = DateUtils.dateOnly(expiryDate).isBefore(today);
       }
     }
+
     // Return the result encapsulated in a DocumentVerificationResult object
     return DocumentVerificationResult(
       extractedText: extractedText,
@@ -68,6 +76,23 @@ class DocumentVerificationService {
       expiryDateFound: expiryDate,
       idNumberFound: idNumber,
     );
+  }
+
+  /// Extracts text from a vehicle registration document using ML Kit OCR.
+  static Future<String> extractText({required File imageFile}) async {
+    final inputImage = InputImage.fromFile(imageFile);
+
+    final RecognizedText recognizedText = await _recognizer.processImage(
+      inputImage,
+    );
+
+    final extractedText = recognizedText.text;
+
+    debugPrint('========== VEHICLE REGISTRATION OCR ==========');
+    debugPrint('Extracted text:\n$extractedText');
+    debugPrint('==============================================');
+
+    return extractedText;
   }
 
   /// Function: _checkNameMatch
@@ -132,30 +157,84 @@ class DocumentVerificationService {
   /// --------------------------------------------------------------
   /// Looks for the latest date in the text, assuming dates are in formats
   /// like DD/MM/YYYY, DD-MM-YYYY, or DD.MM.YYYY.
+
+  /// Finds the latest valid date recognized in the OCR text.
+  /// Supports numeric dates and dates such as 31 DIS 2024.
   static DateTime? _findLatestDate(String text) {
-    final pattern = RegExp(r'(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})');
-    final matches = pattern.allMatches(text);
+    final numericPattern = RegExp(r'\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})\b');
 
-    // Find the latest valid date from the matches
-    DateTime? latest;
-    for (final match in matches) {
-      try {
-        final day = int.parse(match.group(1)!);
-        final month = int.parse(match.group(2)!);
-        var year = int.parse(match.group(3)!);
-        if (year < 100) year += 2000;
+    final textMonthPattern = RegExp(
+      r'\b(\d{1,2})\s+'
+      r'(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|DIS|DIC)'
+      r'\s+(\d{4})\b',
+      caseSensitive: false,
+    );
 
-        final date = DateTime(year, month, day);
-        if (date.year < 2000 || date.year > 2100) continue;
+    const months = <String, int>{
+      'JAN': 1,
+      'FEB': 2,
+      'MAR': 3,
+      'APR': 4,
+      'MAY': 5,
+      'JUN': 6,
+      'JUL': 7,
+      'AUG': 8,
+      'SEP': 9,
+      'OCT': 10,
+      'NOV': 11,
+      'DEC': 12,
+      'DIS': 12,
+      'DIC': 12,
+    };
 
-        if (latest == null || date.isAfter(latest)) {
-          latest = date;
-        }
-      } catch (_) {
-        continue;
+    final dates = <DateTime>[];
+
+    void addDate(int day, int month, int year) {
+      if (year < 100) {
+        year += 2000;
+      }
+
+      if (year < 2000 ||
+          year > 2100 ||
+          month < 1 ||
+          month > 12 ||
+          day < 1 ||
+          day > 31) {
+        return;
+      }
+
+      final date = DateTime(year, month, day);
+
+      // Reject invalid dates such as 31 February.
+      if (date.year == year && date.month == month && date.day == day) {
+        dates.add(date);
       }
     }
-    return latest;
+
+    // Extract numeric dates, such as 31/12/2024.
+    for (final match in numericPattern.allMatches(text)) {
+      addDate(
+        int.parse(match.group(1)!),
+        int.parse(match.group(2)!),
+        int.parse(match.group(3)!),
+      );
+    }
+
+    // Extract dates with month names, such as 31 DIS 2024.
+    for (final match in textMonthPattern.allMatches(text)) {
+      final month = months[match.group(2)!.toUpperCase()];
+
+      if (month != null) {
+        addDate(int.parse(match.group(1)!), month, int.parse(match.group(3)!));
+      }
+    }
+
+    if (dates.isEmpty) {
+      return null;
+    }
+
+    dates.sort((a, b) => a.compareTo(b));
+    return dates.last;
   }
 
   /// Function: dispose

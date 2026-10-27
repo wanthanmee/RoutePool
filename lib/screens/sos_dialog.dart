@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'passenger_home.dart' show RPColors;
 import 'ride_widgets.dart';
 
+/// Opens the emergency confirmation dialog with a non-dismissible barrier.
 Future<void> showSosDialog(BuildContext context) {
   return showDialog(
     context: context,
@@ -14,6 +15,7 @@ Future<void> showSosDialog(BuildContext context) {
   );
 }
 
+/// Runs the emergency countdown and presents the send-or-cancel controls.
 class _SosDialog extends StatefulWidget {
   const _SosDialog();
 
@@ -21,6 +23,7 @@ class _SosDialog extends StatefulWidget {
   State<_SosDialog> createState() => _SosDialogState();
 }
 
+/// Owns the countdown timer and the emergency alert action state.
 class _SosDialogState extends State<_SosDialog> {
   static const _countdownSeconds = 5;
 
@@ -40,6 +43,7 @@ class _SosDialogState extends State<_SosDialog> {
     });
   }
 
+  /// Ends the countdown and starts the alert workflow immediately.
   void _triggerAlert() {
     _timer?.cancel();
     setState(() {
@@ -49,6 +53,7 @@ class _SosDialogState extends State<_SosDialog> {
     _sendAlerts();
   }
 
+  /// Placeholder for notifying emergency contacts and RoutePool.
   Future<void> _sendAlerts() async {
     // TODO: write to Firestore (e.g. sos_alerts/{id} with live location) and
     // notify emergency contacts through your Cloud Function.

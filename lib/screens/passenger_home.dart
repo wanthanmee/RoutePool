@@ -15,8 +15,10 @@ class RPColors {
 }
 
 class PassengerHomeScreen extends StatelessWidget {
+  /// Creates the passenger landing page with the displayed account name.
   const PassengerHomeScreen({super.key, this.userName = 'Alessandra'});
 
+  /// Name displayed in the passenger home header.
   final String userName;
 
   @override

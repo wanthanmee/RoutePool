@@ -111,8 +111,26 @@ class _VerificationScreenState extends State<VerificationScreen> {
               final status = data['verificationStatus'];
 
               // Route the user based on the current verification status.
+
               if (status == 'approved') {
-                _replaceScreen(const LoginScreen());
+                _hasNavigated = true;
+
+                WidgetsBinding.instance.addPostFrameCallback((_) async {
+                  if (!mounted) return;
+
+                  // Capture the Navigator before the async gap.
+                  final navigator = Navigator.of(context);
+
+                  // Sign the driver out so they must log in manually.
+                  await FirebaseAuth.instance.signOut();
+
+                  if (!mounted) return;
+
+                  navigator.pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (_) => const LoginScreen()),
+                    (route) => false,
+                  );
+                });
               } else if (status == 'rejected') {
                 _replaceScreen(
                   RejectedScreen(
@@ -253,6 +271,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
 }
 
 /// The visual state of a single step in the review checklist.
+/// Visual state of an individual verification step.
 enum _StepState { done, active, pending }
 
 /// Widget: _StatusRow
@@ -260,6 +279,7 @@ enum _StepState { done, active, pending }
 /// A single row in the review checklist, showing a status icon next
 /// to a label. The icon and text colour change depending on whether
 /// the step is done, active, or still pending.
+/// Renders the icon, label, and status for one verification step.
 class _StatusRow extends StatelessWidget {
   // Text describing this step.
   final String label;

@@ -13,11 +13,16 @@ import 'ride_widgets.dart';
 
 /// Rides tab: details of the current ride.
 class RidesScreen extends StatelessWidget {
+  /// Creates the rides tab for a passenger or driver.
   const RidesScreen({super.key, required this.isDriver, this.requestId});
 
+  /// Whether to show the driver-specific ride flow.
   final bool isDriver;
+
+  /// Optional ride request ID used to open or cancel a specific request.
   final String? requestId;
 
+  /// Opens the cancellation flow and reports a successful cancellation.
   Future<void> _openCancel(BuildContext context) async {
     if (requestId == null || requestId!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(

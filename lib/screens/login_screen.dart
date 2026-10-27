@@ -9,6 +9,7 @@ import 'app_user_profile.dart';
 
 import '../theme/app_theme.dart';
 
+/// Authenticates an existing user and routes them to the appropriate app area.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -16,6 +17,7 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
+/// Manages login input, Firebase authentication, and account routing.
 class _LoginScreenState extends State<LoginScreen> {
   final _phoneEmailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -30,6 +32,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
+  /// Validates the form and signs in with the user's email and password.
   Future<void> _handleLogin() async {
     setState(() => _errorText = null);
 
@@ -38,9 +41,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     // Basic validation
     if (input.isEmpty || password.isEmpty) {
-      setState(
-        () => _errorText = 'Please enter your email/phone and password.',
-      );
+      setState(() => _errorText = 'Please enter your email and password.');
       return;
     }
 
@@ -325,7 +326,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 16),
                   ],
-                  const _FieldLabel('PHONE / EMAIL'),
+                  const _FieldLabel('EMAIL'),
                   TextField(controller: _phoneEmailController),
                   const SizedBox(height: 16),
 
@@ -413,6 +414,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
+/// Displays the consistent label used above a login form field.
 class _FieldLabel extends StatelessWidget {
   final String text;
   const _FieldLabel(this.text);

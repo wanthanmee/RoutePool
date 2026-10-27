@@ -5,14 +5,14 @@ import 'firebase_options.dart';
 import 'theme/app_theme.dart';
 import 'screens/splash_screen.dart';
 
-// This is the main entry point of the application.
+/// Initializes Flutter and Firebase before starting the RoutePool application.
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const RoutePoolApp());
 }
 
-// The main application widget.
+/// Configures the app-wide Material theme and displays the initial splash screen.
 class RoutePoolApp extends StatelessWidget {
   const RoutePoolApp({super.key});
 
@@ -26,5 +26,4 @@ class RoutePoolApp extends StatelessWidget {
     );
   }
 }
-
 

@@ -13,6 +13,7 @@ import '../services/document_verification.dart';
 import '../services/document_template_matcher.dart';
 import 'verification_screen.dart';
 
+/// Collects and verifies a driver's license document for account review.
 class LicenseUploadScreen extends StatefulWidget {
   const LicenseUploadScreen({super.key});
 
@@ -20,11 +21,13 @@ class LicenseUploadScreen extends StatefulWidget {
   State<LicenseUploadScreen> createState() => _LicenseUploadScreenState();
 }
 
+/// Scans or selects a license image, validates its template, and uploads it.
 class _LicenseUploadScreenState extends State<LicenseUploadScreen> {
   File? _pickedImage;
   bool _isLoading = false;
   String? _errorText;
 
+  /// Opens the edge-detection scanner and stores the resulting document image.
   Future<void> _scanDocument() async {
     try {
       final directory = await getApplicationSupportDirectory();
@@ -55,6 +58,7 @@ class _LicenseUploadScreenState extends State<LicenseUploadScreen> {
     }
   }
 
+  /// Validates and uploads the selected license, then updates the user record.
   Future<void> _handleSubmit() async {
     if (_pickedImage == null) {
       setState(() => _errorText = 'Please scan your license first.');

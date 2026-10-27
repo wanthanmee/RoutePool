@@ -6,11 +6,18 @@ import '../theme/app_theme.dart';
 import 'ic_upload_screen.dart';
 import 'role_select_screen.dart';
 
+/// Explains a rejected document review and provides the available next step.
 class RejectedScreen extends StatefulWidget {
+  /// Explanation provided for the rejected document review.
   final String? reason;
+
+  /// User role used to continue document resubmission.
   final String? role;
+
+  /// Number of document submissions already made for this application.
   final int documentSubmissionAttempts;
 
+  /// Creates the rejection page with the review reason and retry count.
   const RejectedScreen({
     super.key,
     this.reason,
@@ -22,9 +29,11 @@ class RejectedScreen extends StatefulWidget {
   State<RejectedScreen> createState() => _RejectedScreenState();
 }
 
+/// Handles retry eligibility and navigation after a rejected review.
 class _RejectedScreenState extends State<RejectedScreen> {
   bool _isLoading = false;
 
+  /// Restarts document submission when allowed, otherwise returns to signup.
   Future<void> _handleTryAgain() async {
     setState(() => _isLoading = true);
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+/// Color constants used by the shared RoutePool theme.
 class AppColors {
   static const Color primaryTeal = Color(0xFF0D7C8F);
   static const Color accentAmber = Color(0xFFF5A623);
@@ -8,7 +9,9 @@ class AppColors {
   static const Color gray = Color(0xFFDADADA);
 }
 
+/// Defines the application's Material 3 light theme and common component styles.
 class AppTheme {
+  /// Creates the shared light theme used throughout the app.
   static ThemeData get lightTheme {
     final baseTextTheme = GoogleFonts.plusJakartaSansTextTheme();
 

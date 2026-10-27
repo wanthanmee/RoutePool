@@ -7,7 +7,11 @@ import 'passenger_home.dart' show RPColors;
 import 'share_trip_sheet.dart';
 import 'sos_dialog.dart';
 
+/// Combines a live trip map with the trip's current route and fare details.
 class GpsViewScreen extends StatelessWidget {
+  /// Creates the live trip view for [tripId].
+  ///
+  /// Set [isDriver] to true to show driver-specific navigation labels.
   const GpsViewScreen({super.key, required this.tripId, this.isDriver = false});
 
   final String tripId;
@@ -30,6 +34,7 @@ class GpsViewScreen extends StatelessWidget {
   }
 }
 
+/// Streams trip information and displays its route, status, and fare summary.
 class _TripInfoPanel extends StatelessWidget {
   const _TripInfoPanel({required this.tripId, required this.isDriver});
 
@@ -180,6 +185,7 @@ class _TripInfoPanel extends StatelessWidget {
   }
 }
 
+/// Displays a labeled pickup or drop-off value with its matching map icon.
 class _LocationRow extends StatelessWidget {
   const _LocationRow({
     required this.icon,

@@ -13,6 +13,7 @@ import 'package:flutter_compass/flutter_compass.dart';
 
 import 'book_ride_screen.dart';
 
+/// Transit or pickup hub loaded from a RoutePool or GTFS JSON record.
 class Hub {
   final String id;
   final String name;
@@ -32,19 +33,8 @@ class Hub {
     required this.nextBus,
     required this.services,
   });
-  factory Hub.fromJson(Map<String, dynamic> json) {
-    return Hub(
-      id: json['id'].toString(),
-      name: json['name'].toString(),
-      address: json['address'].toString(),
-      lat: (json['lat'] as num).toDouble(),
-      lon: (json['lon'] as num).toDouble(),
-      waiting: (json['waiting'] as num?)?.toInt() ?? 0,
-      nextBus: json['nextBus']?.toString() ?? '',
-      services: json['services']?.toString() ?? '',
-    );
-  }
-  // For the GTFS bus_stops.json file
+
+  /// Creates a hub from a GTFS bus-stop record, accepting both field formats.
   factory Hub.fromStopJson(Map<String, dynamic> json) {
     return Hub(
       id: (json['id'] ?? json['stop_id']).toString(),
@@ -59,6 +49,7 @@ class Hub {
   }
 }
 
+/// A navigation instruction associated with a range of route-point indexes.
 class WalkingNavigationStep {
   final String instruction;
   final int type;
@@ -72,6 +63,7 @@ class WalkingNavigationStep {
   });
 }
 
+/// The current distances along a route and away from its path.
 class RouteProgress {
   final double distanceAlongRoute;
   final double distanceFromRoute;
@@ -81,14 +73,21 @@ class RouteProgress {
   });
 }
 
+/// Displays nearby hubs, location search, and walking directions to a hub.
 class HubScreen extends StatefulWidget {
+  /// Whether the screen is being used in the driver flow.
   final bool isDriver;
+
+  /// Optional OpenRouteService key used for route requests.
   final String? orsApiKey;
+
+  /// Creates the hub map for a passenger or driver.
   const HubScreen({super.key, required this.isDriver, this.orsApiKey});
   @override
   State<HubScreen> createState() => _HubScreenState();
 }
 
+/// Manages hub data, map markers, location tracking, and route guidance.
 class _HubScreenState extends State<HubScreen> {
   static const Color _primary = Color(0xFF2563EB);
   static const Color _secondary = Color(0xFF0F766E);
@@ -184,37 +183,44 @@ class _HubScreenState extends State<HubScreen> {
   // ------------------------------------------------------------
   // LOAD HUB DATA
   // ------------------------------------------------------------
+
   Future<void> _loadHubs() async {
     try {
-      final String hubsString = await rootBundle.loadString('assets/hubs.json');
+      // Load bus-stop data from the GTFS JSON file.
       final String stopsString = await rootBundle.loadString(
         'assets/bus_stops.json',
       );
-      final List<Hub> hubs = (json.decode(hubsString) as List<dynamic>)
-          .map((e) => Hub.fromJson(e as Map<String, dynamic>))
-          .toList();
+
+      // Convert each bus-stop record into a Hub object.
       final List<Hub> stops = (json.decode(stopsString) as List<dynamic>)
           .map((e) => Hub.fromStopJson(e as Map<String, dynamic>))
           .toList();
+
       if (!mounted) return;
+
       setState(() {
+        // Use only GTFS bus stops for both account types.
         _hubs
           ..clear()
-          ..addAll(widget.isDriver ? stops : [...hubs, ...stops]);
+          ..addAll(stops);
+
+        // Generate map markers for the loaded bus stops.
         _hubMarkers = _hubs.map(_buildStopMarker).toList();
+
         _isLoading = false;
+        _errorMessage = null;
       });
-      debugPrint(
-        widget.isDriver
-            ? 'Driver map: Loaded ${stops.length} bus stops'
-            : 'Passenger map: Loaded ${hubs.length} hubs and ${stops.length} stops',
-      );
+
+      debugPrint('Loaded ${stops.length} GTFS bus stops.');
+
+      // Refresh the nearest bus-stop information.
       _updateNearestHub();
-      debugPrint('Loaded ${hubs.length} hubs and ${stops.length} stops');
-      _updateNearestHub();
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('Hub load error: $e');
+      debugPrintStack(stackTrace: stackTrace);
+
       if (!mounted) return;
+
       setState(() {
         _isLoading = false;
         _errorMessage = 'Unable to load Hub data.';
@@ -1506,6 +1512,7 @@ class _HubScreenState extends State<HubScreen> {
 // ------------------------------------------------------------
 // REUSABLE ACTION BUTTON (overflow-safe label)
 // ------------------------------------------------------------
+/// Renders a labeled action button used in the selected-hub panel.
 class _HubActionButton extends StatelessWidget {
   final VoidCallback onPressed;
   final IconData icon;

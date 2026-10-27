@@ -50,6 +50,8 @@ class RideMatchingScreen extends StatelessWidget {
             'searchExpiresAt': Timestamp.fromDate(
               now.add(const Duration(minutes: 5)),
             ),
+            'groupSearchId': null,
+            'groupSearchExpiresAt': null,
             'matchingChoice': 'shared',
             'updatedAt': FieldValue.serverTimestamp(),
           });
@@ -174,8 +176,12 @@ class RideMatchingScreen extends StatelessWidget {
     final pickup = data['pickupName'] as String? ?? 'Pickup hub';
     final dropoff = data['dropoffAddress'] as String? ?? 'Destination';
 
-    final departure = data['departureTime'];
-    final searchExpiresAt = data['searchExpiresAt'];
+    final requestedAt = data['departureTime'];
+    // Use the group's shared deadline when the passenger
+    // belongs to a collecting group.
+    // Otherwise, use their individual search deadline.
+    final searchExpiresAt =
+        data['groupSearchExpiresAt'] ?? data['searchExpiresAt'];
 
     final myPassengers = (data['passengerCount'] as num?)?.toInt() ?? 1;
 
@@ -305,12 +311,12 @@ class RideMatchingScreen extends StatelessWidget {
                   Expanded(child: Text(dropoff)),
                 ],
               ),
-              if (departure is Timestamp) ...[
+              if (requestedAt is Timestamp) ...[
                 const SizedBox(height: 16),
                 Text(
-                  'Departure: '
-                  '${MaterialLocalizations.of(context).formatFullDate(departure.toDate())} at '
-                  '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(departure.toDate()))}',
+                  'Ride requested: '
+                  '${MaterialLocalizations.of(context).formatFullDate(requestedAt.toDate())} at '
+                  '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(requestedAt.toDate()))}',
                   style: const TextStyle(color: Colors.black54, fontSize: 12),
                 ),
               ],

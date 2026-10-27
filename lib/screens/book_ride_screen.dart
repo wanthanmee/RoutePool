@@ -6,13 +6,24 @@ import '../services/ride_request_service.dart';
 
 import 'ride_matching_screen.dart';
 
+/// Collects a passenger's destination and scheduling details for a ride request.
 class BookRideScreen extends StatefulWidget {
+  /// Identifier of the selected pickup hub.
   final String pickupHubId;
+
+  /// Display name of the selected pickup hub.
   final String pickupName;
+
+  /// Human-readable pickup address.
   final String pickupAddress;
+
+  /// Latitude of the selected pickup location.
   final double pickupLat;
+
+  /// Longitude of the selected pickup location.
   final double pickupLon;
 
+  /// Creates a booking screen for a ride starting at the selected pickup hub.
   const BookRideScreen({
     super.key,
     required this.pickupHubId,
@@ -26,6 +37,7 @@ class BookRideScreen extends StatefulWidget {
   State<BookRideScreen> createState() => _BookRideScreenState();
 }
 
+/// Manages destination search, booking options, and ride-request submission.
 class _BookRideScreenState extends State<BookRideScreen> {
   static const Color teal = Color(0xFF0F5C5F);
   //static const Color orange = Color(0xFFF5A623);
@@ -43,8 +55,6 @@ class _BookRideScreenState extends State<BookRideScreen> {
 
   bool _isSubmitting = false;
 
-  DateTime _selectedDate = DateTime.now();
-  TimeOfDay _selectedTime = TimeOfDay.now();
   int _passengerCount = 1;
 
   @override
@@ -54,30 +64,7 @@ class _BookRideScreenState extends State<BookRideScreen> {
     super.dispose();
   }
 
-  Future<void> _chooseDate() async {
-    final date = await showDatePicker(
-      context: context,
-      initialDate: _selectedDate,
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 90)),
-    );
-
-    if (date != null) {
-      setState(() => _selectedDate = date);
-    }
-  }
-
-  Future<void> _chooseTime() async {
-    final time = await showTimePicker(
-      context: context,
-      initialTime: _selectedTime,
-    );
-
-    if (time != null) {
-      setState(() => _selectedTime = time);
-    }
-  }
-
+  /// Debounces destination queries and loads matching location suggestions.
   void _onDropoffChanged(String value) {
     _selectedDropoffLat = null;
     _selectedDropoffLon = null;
@@ -105,6 +92,8 @@ class _BookRideScreenState extends State<BookRideScreen> {
 
         final results = await _rideRequestService.searchDestinationSuggestions(
           query,
+          pickupLat: widget.pickupLat,
+          pickupLon: widget.pickupLon,
         );
 
         debugPrint('[Drop-off] Photon returned ${results.length} results.');
@@ -138,6 +127,7 @@ class _BookRideScreenState extends State<BookRideScreen> {
     });
   }
 
+  /// Uses a selected suggestion's address and coordinates as the destination.
   void _selectDropoffSuggestion(Map<String, dynamic> suggestion) {
     _suggestionDebounce?.cancel();
 
@@ -161,9 +151,13 @@ class _BookRideScreenState extends State<BookRideScreen> {
   Future<void> _findRoutePool() async {
     debugPrint('[Booking] Button pressed');
 
-    if (_dropoffController.text.trim().isEmpty) {
+    if (_dropoffController.text.trim().isEmpty ||
+        _selectedDropoffLat == null ||
+        _selectedDropoffLon == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter your drop-off location.')),
+        const SnackBar(
+          content: Text('Please select a destination from the suggestions.'),
+        ),
       );
       return;
     }
@@ -173,31 +167,11 @@ class _BookRideScreenState extends State<BookRideScreen> {
       return;
     }
 
-    // Construct the selected departure date and time.
-    final departureDateTime = DateTime(
-      _selectedDate.year,
-      _selectedDate.month,
-      _selectedDate.day,
-      _selectedTime.hour,
-      _selectedTime.minute,
-    );
-
-    // Validate that departure is in the future.
-    if (!departureDateTime.isAfter(DateTime.now())) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please select a future departure date and time.'),
-        ),
-      );
-      return;
-    }
-
     setState(() => _isSubmitting = true);
 
     try {
       debugPrint('[Booking] Calling createRideRequest');
       debugPrint('[Booking] Destination: ${_dropoffController.text.trim()}');
-      debugPrint('[Booking] Departure: $departureDateTime');
 
       final requestId = await _rideRequestService.createRideRequest(
         pickupHubId: widget.pickupHubId,
@@ -208,7 +182,6 @@ class _BookRideScreenState extends State<BookRideScreen> {
         dropoffAddress: _dropoffController.text.trim(),
         dropoffLat: _selectedDropoffLat,
         dropoffLon: _selectedDropoffLon,
-        departureDateTime: departureDateTime,
         passengerCount: _passengerCount,
       );
 
@@ -240,9 +213,6 @@ class _BookRideScreenState extends State<BookRideScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final dateText =
-        '${_selectedDate.day}/${_selectedDate.month}/${_selectedDate.year}';
-
     return Scaffold(
       backgroundColor: const Color(0xFFF6F7F8),
       appBar: AppBar(
@@ -312,7 +282,7 @@ class _BookRideScreenState extends State<BookRideScreen> {
                       controller: _dropoffController,
                       onChanged: _onDropoffChanged,
                       decoration: InputDecoration(
-                        hintText: 'Enter destination or address',
+                        hintText: 'Search and select a destination',
                         prefixIcon: const Icon(
                           Icons.location_on,
                           color: Colors.red,
@@ -382,37 +352,14 @@ class _BookRideScreenState extends State<BookRideScreen> {
                 const SizedBox(height: 10),
                 const Text(
                   'Pick-up is at designated bus hubs only. '
-                  'Drop-off can be at your chosen address.',
+                  'Drop-off must be within Penang, including Penang Island '
+                  'and Seberang Perai.',
                   style: TextStyle(color: teal, fontSize: 11),
                 ),
               ],
             ),
           ),
           const SizedBox(height: 16),
-
-          Row(
-            children: [
-              Expanded(
-                child: _detailTile(
-                  icon: Icons.calendar_today,
-                  title: 'Date',
-                  value: dateText,
-                  onTap: _chooseDate,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _detailTile(
-                  icon: Icons.access_time,
-                  title: 'Time',
-                  value: _selectedTime.format(context),
-                  onTap: _chooseTime,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
           Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
@@ -443,7 +390,7 @@ class _BookRideScreenState extends State<BookRideScreen> {
                   ),
                 ),
                 IconButton(
-                  onPressed: _passengerCount < 4
+                  onPressed: _passengerCount < 12
                       ? () => setState(() => _passengerCount++)
                       : null,
                   icon: const Icon(Icons.add),
@@ -508,38 +455,6 @@ class _BookRideScreenState extends State<BookRideScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _detailTile({
-    required IconData icon,
-    required String title,
-    required String value,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: teal, size: 22),
-            const SizedBox(height: 10),
-            Text(
-              title,
-              style: const TextStyle(color: Colors.black54, fontSize: 12),
-            ),
-            const SizedBox(height: 4),
-            Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
-          ],
-        ),
       ),
     );
   }

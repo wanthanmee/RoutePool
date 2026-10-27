@@ -5,8 +5,10 @@ import 'passenger_home.dart' show RPColors;
 import 'ride_mock_data.dart';
 import 'ride_widgets.dart';
 
+/// Available fare allocation strategies in the split-fare screen.
 enum _SplitMode { dynamic, equal, manual }
 
+/// Shows each passenger's share of the current ride fare.
 class SplitFareScreen extends StatefulWidget {
   const SplitFareScreen({super.key});
 
@@ -14,9 +16,11 @@ class SplitFareScreen extends StatefulWidget {
   State<SplitFareScreen> createState() => _SplitFareScreenState();
 }
 
+/// Calculates and displays passenger fares for the selected split mode.
 class _SplitFareScreenState extends State<SplitFareScreen> {
   _SplitMode _mode = _SplitMode.dynamic;
 
+  /// Returns the displayed fare share for the passenger at [i].
   double _amountFor(int i) {
     switch (_mode) {
       case _SplitMode.dynamic:
@@ -31,6 +35,7 @@ class _SplitFareScreenState extends State<SplitFareScreen> {
     }
   }
 
+  /// Formats a fare amount with two decimal places and a currency symbol.
   String _money(double v) => '\$${v.toStringAsFixed(2)}';
 
   @override
@@ -122,6 +127,7 @@ class _SplitFareScreenState extends State<SplitFareScreen> {
   }
 }
 
+/// Lets the user choose the fare allocation strategy.
 class _ModeTabs extends StatelessWidget {
   const _ModeTabs({required this.mode, required this.onChanged});
 
@@ -165,6 +171,7 @@ class _ModeTabs extends StatelessWidget {
   );
 }
 
+/// Shows one passenger and their calculated fare share.
 class _PassengerFareTile extends StatelessWidget {
   const _PassengerFareTile({
     required this.passenger,

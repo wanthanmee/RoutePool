@@ -11,8 +11,10 @@ import 'ride_widgets.dart';
 class DriverRideScreen extends StatelessWidget {
   const DriverRideScreen({super.key, this.requestId});
 
+  /// Optional request ID associated with the active trip.
   final String? requestId;
 
+  /// Asks the driver to confirm ending the ride.
   Future<void> _confirmEndRide(BuildContext context) async {
     final ok = await showDialog<bool>(
       context: context,
@@ -154,6 +156,7 @@ class DriverRideScreen extends StatelessWidget {
 }
 
 // Keep _ActiveTripPanel below this point.
+/// Shows an active trip's live map and relevant passenger information.
 class _ActiveTripPanel extends StatelessWidget {
   const _ActiveTripPanel({
     required this.tripId,
@@ -248,6 +251,7 @@ class _ActiveTripPanel extends StatelessWidget {
   }
 }
 
+/// Summarizes one passenger's request within the driver's active trip.
 class _PassengerRequestTile extends StatelessWidget {
   const _PassengerRequestTile({required this.requestId});
 

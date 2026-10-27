@@ -8,6 +8,7 @@ enum DocumentTemplate {
   philippinePassport,
   malaysiaLicense,
   philippinesLicense,
+  malaysiaVehicleRegistration,
   unknown,
 }
 
@@ -157,11 +158,6 @@ class DocumentTemplateMatcher {
 
       final passesTemplate = passesMatchCount && passesMatchRatio;
 
-      debugPrint('Passes Match Count: $passesMatchCount');
-      debugPrint('Passes Match Ratio: $passesMatchRatio');
-      debugPrint('Template Accepted: $passesTemplate');
-      debugPrint('--------------------------------------');
-
       if (passesTemplate &&
           (bestTemplate == DocumentTemplate.unknown ||
               matchRatio > bestMatchRatio ||
@@ -212,6 +208,9 @@ class DocumentTemplateMatcher {
       case DocumentTemplate.philippinesLicense:
         return 'assets/document_templates/philippine_license_template.jpg';
 
+      case DocumentTemplate.malaysiaVehicleRegistration:
+        return 'assets/document_templates/malaysia_vehicle_registration_template.jpg';
+
       case DocumentTemplate.unknown:
         throw ArgumentError('Unknown document has no template asset.');
     }
@@ -231,6 +230,9 @@ class DocumentTemplateMatcher {
 
       case DocumentTemplate.philippinesLicense:
         return 'Philippine Driving License';
+
+      case DocumentTemplate.malaysiaVehicleRegistration:
+        return 'Malaysian Vehicle Registration Document';
 
       case DocumentTemplate.unknown:
         return 'Unknown Document';

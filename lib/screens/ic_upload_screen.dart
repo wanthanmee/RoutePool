@@ -19,21 +19,25 @@ import 'verification_screen.dart';
 
 /// Widget: ICUploadScreen
 /// -------------------------------------------------------------------
-/// Allows users to submit a scan or uplaod a photo of their MyKad/Passport
+/// Allows users to scan or upload a photo of their MyKad or passport.
 class IcUploadScreen extends StatefulWidget {
+  /// User role, either `passenger` or `driver`.
   final String role; // 'passenger' or 'driver'
 
+  /// Creates the identity-document upload step for [role].
   const IcUploadScreen({super.key, required this.role});
 
   @override
   State<IcUploadScreen> createState() => _IcUploadScreenState();
 }
 
+/// Scans, validates, and uploads the user's identity document.
 class _IcUploadScreenState extends State<IcUploadScreen> {
   File? _pickedImage;
   bool _isLoading = false;
   String? _errorText;
 
+  /// Opens the document scanner and stores the resulting image for review.
   Future<void> _scanDocument() async {
     try {
       final directory = await getApplicationSupportDirectory();
@@ -92,6 +96,7 @@ class _IcUploadScreenState extends State<IcUploadScreen> {
     }
   }
 
+  /// Validates the selected document and submits it for account verification.
   Future<void> _handleSubmit() async {
     if (_pickedImage == null) {
       setState(() => _errorText = 'Please scan your IC/Passport first.');

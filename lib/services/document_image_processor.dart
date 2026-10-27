@@ -3,7 +3,12 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 
+/// Normalizes document images for consistent downstream verification.
 class DocumentImageProcessor {
+  /// Applies EXIF orientation, scales the image to fit within 1600 x 1200,
+  /// and returns the result encoded as a high-quality JPEG.
+  ///
+  /// Throws an [Exception] if [originalBytes] cannot be decoded as an image.
   static Uint8List normalize(Uint8List originalBytes) {
     debugPrint('[ImageProcessor] Starting normalization');
 

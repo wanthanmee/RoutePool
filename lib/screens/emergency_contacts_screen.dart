@@ -23,6 +23,7 @@ class _ContactEntry {
 }
 
 /// Stored in users/{uid}.emergencyContacts as a list of {name, phone} maps.
+/// Lets the signed-in user manage up to three emergency contacts.
 class EmergencyContactsScreen extends StatefulWidget {
   const EmergencyContactsScreen({super.key});
 
@@ -31,6 +32,7 @@ class EmergencyContactsScreen extends StatefulWidget {
       _EmergencyContactsScreenState();
 }
 
+/// Loads, validates, and saves the editable emergency-contact entries.
 class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
   final _formKey = GlobalKey<FormState>();
   final List<_ContactEntry> _entries = [];
@@ -55,6 +57,7 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
   // LOAD / SAVE
   // ------------------------------------------------------------
 
+  /// Loads saved contacts from the current user's Firestore profile.
   Future<void> _load() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
 
@@ -88,6 +91,7 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
     setState(() => _loading = false);
   }
 
+  /// Validates and saves the non-empty contact entries to Firestore.
   Future<void> _save() async {
     FocusScope.of(context).unfocus();
     if (!_formKey.currentState!.validate()) return;
@@ -378,6 +382,7 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
 }
 
 /// Draws a dashed rounded-rectangle border (no extra package needed).
+/// Paints a rounded dashed outline around an emergency-contact card.
 class _DashedRRectPainter extends CustomPainter {
   _DashedRRectPainter(this.color);
 

@@ -23,20 +23,26 @@ const _passengerReasons = [
 ];
 
 /// Pops with `true` when the driver confirms the cancellation.
+/// Presents role-specific cancellation reasons and records the selected reason.
 class CancelRideScreen extends StatefulWidget {
+  /// Creates the cancellation form for the specified request.
   const CancelRideScreen({
     super.key,
     required this.isDriver,
     required this.requestId,
   });
 
+  /// Whether the person cancelling the ride is the driver.
   final bool isDriver;
+
+  /// Firestore ID of the ride request to cancel.
   final String requestId;
 
   @override
   State<CancelRideScreen> createState() => _CancelRideScreenState();
 }
 
+/// Validates and submits the ride cancellation details.
 class _CancelRideScreenState extends State<CancelRideScreen> {
   List<String> get _reasons =>
       widget.isDriver ? _driverReasons : _passengerReasons;
@@ -51,6 +57,7 @@ class _CancelRideScreenState extends State<CancelRideScreen> {
     super.dispose();
   }
 
+  /// Updates the request to cancelled if it is still in a cancellable state.
   Future<void> _submit() async {
     if (_reason == null || _submitting) return;
 
@@ -237,6 +244,7 @@ class _CancelRideScreenState extends State<CancelRideScreen> {
   }
 }
 
+/// Displays a selectable cancellation reason and optional supporting details.
 class _ReasonTile extends StatelessWidget {
   const _ReasonTile({
     required this.label,

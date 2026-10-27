@@ -8,7 +8,9 @@ import 'passenger_home.dart';
 import 'profile_screen.dart';
 import 'rides_screen.dart';
 
+/// Provides the main tab navigation and keeps the signed-in profile current.
 class MainShell extends StatefulWidget {
+  /// Creates the app shell with the profile loaded during authentication.
   const MainShell({
     super.key,
     required this.userProfile,
@@ -18,12 +20,15 @@ class MainShell extends StatefulWidget {
   /// The profile loaded at login. Used until the live data arrives and as a
   /// fallback if the connection drops.
   final AppUserProfile userProfile;
+
+  /// Index of the tab to display when the shell is first opened.
   final int initialIndex;
 
   @override
   State<MainShell> createState() => _MainShellState();
 }
 
+/// Builds tab pages from the latest profile and tracks visited destinations.
 class _MainShellState extends State<MainShell> {
   late int _index = widget.initialIndex;
   final Set<int> _visited = {};
@@ -46,6 +51,7 @@ class _MainShellState extends State<MainShell> {
     _visited.add(_index);
   }
 
+  /// Creates the tab page at [i] using the supplied live user [profile].
   Widget _buildPage(int i, AppUserProfile profile) {
     switch (i) {
       case 0:
@@ -151,6 +157,7 @@ class _MainShellState extends State<MainShell> {
   }
 }
 
+/// Displays a simple placeholder for a tab that is not implemented yet.
 class _Placeholder extends StatelessWidget {
   const _Placeholder(this.title);
 

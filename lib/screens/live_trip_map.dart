@@ -13,7 +13,11 @@ import 'passenger_home.dart' show RPColors;
 
 const String _orsApiKey = String.fromEnvironment('ORS_API_KEY');
 
+/// Displays a live map with the trip route and the signed-in user's location.
 class LiveTripMap extends StatefulWidget {
+  /// Creates the map for the trip identified by [tripId].
+  ///
+  /// [isDriver] determines which participant's location is being published.
   const LiveTripMap({super.key, required this.tripId, required this.isDriver});
 
   final String tripId;
@@ -23,6 +27,7 @@ class LiveTripMap extends StatefulWidget {
   State<LiveTripMap> createState() => _LiveTripMapState();
 }
 
+/// Tracks device location and synchronizes trip map data with Firestore.
 class _LiveTripMapState extends State<LiveTripMap> {
   final MapController _mapController = MapController();
 

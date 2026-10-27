@@ -5,6 +5,7 @@ import 'passenger_home.dart' show RPColors;
 import 'ride_mock_data.dart';
 import 'ride_widgets.dart';
 
+/// Opens the bottom sheet containing the current trip's share message and link.
 Future<void> showShareTripSheet(BuildContext context) {
   return showModalBottomSheet(
     context: context,
@@ -17,6 +18,7 @@ Future<void> showShareTripSheet(BuildContext context) {
   );
 }
 
+/// Presents trip-sharing content and the available share actions.
 class _ShareTripSheet extends StatelessWidget {
   const _ShareTripSheet();
 
@@ -117,6 +119,7 @@ class _ShareTripSheet extends StatelessWidget {
   );
 }
 
+/// Displays one labeled sharing action with its icon and color treatment.
 class _ShareOption extends StatelessWidget {
   const _ShareOption({
     required this.icon,

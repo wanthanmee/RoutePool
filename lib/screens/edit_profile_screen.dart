@@ -12,11 +12,17 @@ import 'package:flutter/material.dart';
 
 import 'form_widgets.dart';
 import 'passenger_home.dart' show RPColors;
+
+import '../services/document_verification.dart';
+import '../services/document_template_matcher.dart';
+import '../services/document_image_processor.dart';
 import '../services/profile_photo_service.dart';
 
 const String _kNameField = 'name';
 
+/// Allows a signed-in user to update profile and, for drivers, vehicle details.
 class EditProfileScreen extends StatefulWidget {
+  /// Creates the editor with the account details currently shown in the UI.
   const EditProfileScreen({
     super.key,
     required this.initialName,
@@ -34,6 +40,7 @@ class EditProfileScreen extends StatefulWidget {
   State<EditProfileScreen> createState() => _EditProfileScreenState();
 }
 
+/// Loads and saves profile data, vehicle information, and profile imagery.
 class _EditProfileScreenState extends State<EditProfileScreen> {
   final _formKey = GlobalKey<FormState>();
 
@@ -79,6 +86,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _loadAccountAndVehicle();
   }
 
+  /// Releases Firestore listeners and text controllers owned by this screen.
   @override
   void dispose() {
     _vehicleStatusSubscription?.cancel();
@@ -93,6 +101,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     super.dispose();
   }
 
+  /// Subscribes to live vehicle verification updates for the given driver.
   void _listenToVehicleStatus(String uid) {
     _vehicleStatusSubscription?.cancel();
 
@@ -123,6 +132,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         );
   }
 
+  /// Loads the signed-in user's profile and any associated vehicle record.
   Future<void> _loadAccountAndVehicle() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
 
@@ -220,12 +230,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
     final plate = _normalizePlateNumber(value);
 
-    // Standard Penang series: P + 1–2 series letters + 1–4 digits.
-    // Excludes I, O and Z from the series letters.
-    final penangPlate = RegExp(r'^P[A-HJ-NP-Y]{1,2}[1-9][0-9]{0,3}$');
+    final penangPlate = RegExp(r'^P[A-HJ-NP-Y]{0,2}[1-9][0-9]{0,3}$');
 
     if (!penangPlate.hasMatch(plate)) {
-      return 'Enter a valid Penang plate number, e.g. PSG2439.';
+      return 'Invalid Penang plate. Example: PSG 2439.';
     }
 
     return null;
@@ -253,11 +261,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final capacity = int.tryParse((value ?? '').trim());
 
     if (capacity == null) {
-      return 'Enter the number of passenger seats.';
+      return 'Enter a valid number of passenger seats.';
     }
 
-    if (capacity < 1 || capacity > 4) {
-      return 'Enter between 1 and 4 passenger seats.';
+    if (capacity < 1) {
+      return 'Passenger seat capacity must be at least 1.';
+    }
+
+    if (capacity > 12) {
+      return 'RoutePool currently supports up to 12 passenger seats.';
     }
 
     return null;
@@ -333,15 +345,72 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       final userRef = firestore.collection('users').doc(uid);
 
       String? uploadedRegistrationUrl;
+      String? registrationOcrText;
 
       if (_isDriver && _registrationDocumentImage != null) {
+        // Read and normalize the scanned registration document.
+        final originalBytes = await _registrationDocumentImage!.readAsBytes();
+
+        final normalizedBytes = DocumentImageProcessor.normalize(originalBytes);
+
+        // Layer 1: Check whether the image resembles the
+        // supported vehicle registration document template.
+        final templateResult = await DocumentTemplateMatcher.matchDocument(
+          imageBytes: normalizedBytes,
+          allowedTemplates: [DocumentTemplate.malaysiaVehicleRegistration],
+        );
+
+        debugPrint(
+          'Vehicle document template: '
+          '${DocumentTemplateMatcher.getDocumentName(templateResult.documentType)}',
+        );
+        debugPrint(
+          'Vehicle document matches template: ${templateResult.isMatch}',
+        );
+        debugPrint(
+          'Vehicle document good matches: ${templateResult.goodMatches}',
+        );
+
+        // Do not upload if the document fails the template check.
+        if (!templateResult.isMatch) {
+          throw Exception(
+            'The document could not be identified as a supported '
+            'vehicle registration document. Please scan it again '
+            'or use a clearer image.',
+          );
+        }
+
+        // Save the normalized image as a temporary JPEG.
+        final tempDirectory = await getTemporaryDirectory();
+
+        final normalizedFile = File(
+          p.join(
+            tempDirectory.path,
+            'normalized_vehicle_${DateTime.now().millisecondsSinceEpoch}.jpg',
+          ),
+        );
+
+        await normalizedFile.writeAsBytes(normalizedBytes, flush: true);
+
+        // Layer 2: Extract text from the normalized vehicle registration document.
+        registrationOcrText = await DocumentVerificationService.extractText(
+          imageFile: normalizedFile,
+        );
+
+        debugPrint('Vehicle registration OCR: $registrationOcrText');
+        debugPrint('OCR text is empty: ${registrationOcrText.trim().isEmpty}');
+        // Upload only after the template check passes.
         final storageRef = FirebaseStorage.instance
             .ref()
-            .child('users')
+            .child('vehicles')
             .child(uid)
-            .child('vehicle_registration.jpg');
+            .child('registration_document.jpg');
 
-        await storageRef.putFile(_registrationDocumentImage!);
+        await storageRef.putFile(
+          normalizedFile,
+          SettableMetadata(contentType: 'image/jpeg'),
+        );
+
         uploadedRegistrationUrl = await storageRef.getDownloadURL();
       }
 
@@ -397,13 +466,24 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
           // Clear the old rejection reason when a new review is requested.
           vehicleData['rejectionReason'] = FieldValue.delete();
+          vehicleData['approvedAt'] = FieldValue.delete();
         }
 
         if (uploadedRegistrationUrl != null) {
           vehicleData['registrationDocumentUrl'] = uploadedRegistrationUrl;
         }
 
+        if (registrationOcrText != null) {
+          vehicleData['registrationOcrText'] = registrationOcrText;
+        }
+
         batch.set(vehicleRef, vehicleData, SetOptions(merge: true));
+
+        // Automatically take the driver offline when vehicle
+        // details change and require administrator reapproval.
+        if (needsReapproval) {
+          batch.set(userRef, {'isAvailable': false}, SetOptions(merge: true));
+        }
       }
       batch.set(userRef, {
         _kNameField: _nameController.text.trim(),
@@ -412,6 +492,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
       // Profile and vehicle changes succeed or fail together.
       await batch.commit();
+
+      if (_isDriver) {
+        final savedVehicle = await firestore
+            .collection('vehicles')
+            .doc(uid)
+            .get();
+
+        debugPrint(
+          'Saved vehicle OCR: ${savedVehicle.data()?['registrationOcrText']}',
+        );
+      }
 
       if (!mounted) return;
 
@@ -438,7 +529,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
       if (!mounted) return;
 
-      _showMessage('Could not save your changes. Please try again.');
+      _showMessage('Save failed: $e');
     } finally {
       if (mounted) {
         setState(() => _saving = false);
@@ -820,8 +911,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           TextFormField(
             controller: _capacityController,
             keyboardType: TextInputType.number,
-            decoration: rpInputDecoration(hint: 'Enter 1 to 4 seats'),
+            decoration: rpInputDecoration(
+              hint: 'Enter your vehicle passenger seat capacity',
+            ),
             validator: _validateCapacity,
+          ),
+
+          const SizedBox(height: 6),
+
+          const Text(
+            'Enter the actual number of passenger seats in your vehicle, '
+            'excluding the driver. This information requires admin approval.',
+            style: TextStyle(fontSize: 11, color: RPColors.textGrey),
           ),
           const SizedBox(height: 20),
 

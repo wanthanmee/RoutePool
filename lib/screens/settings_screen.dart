@@ -17,12 +17,14 @@ const Map<String, String> _languages = {
 /// Preferences are stored in users/{uid}.settings as
 /// {notifications: bool, language: 'en' | 'ms' | 'zh'}.
 class SettingsScreen extends StatefulWidget {
+  /// Creates the settings page for the currently signed-in user.
   const SettingsScreen({super.key});
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
+/// Loads and persists the current user's notification and language settings.
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _notifications = true;
   String _language = 'en';
@@ -34,6 +36,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _load();
   }
 
+  /// Loads saved preferences, retaining defaults when no values are stored.
   Future<void> _load() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
 
@@ -162,9 +165,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showMessage(String text) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(text)));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
   // ------------------------------------------------------------
@@ -232,6 +233,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 // SMALL WIDGETS
 // ------------------------------------------------------------
 
+/// Displays a section title in the settings page.
 class _SectionHeader extends StatelessWidget {
   const _SectionHeader(this.text);
 
@@ -254,6 +256,7 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
+/// Groups related settings rows in a styled card.
 class _SettingsCard extends StatelessWidget {
   const _SettingsCard({required this.children});
 
@@ -273,6 +276,7 @@ class _SettingsCard extends StatelessWidget {
   }
 }
 
+/// Separates adjacent settings rows.
 class _RowDivider extends StatelessWidget {
   const _RowDivider();
 
@@ -281,6 +285,7 @@ class _RowDivider extends StatelessWidget {
       const Divider(height: 1, indent: 16, endIndent: 16);
 }
 
+/// Displays one settings label and its associated value or action.
 class _SettingsRow extends StatelessWidget {
   const _SettingsRow({
     required this.icon,

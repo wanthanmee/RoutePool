@@ -9,7 +9,9 @@ import 'passenger_home.dart' show RPColors;
 import '../services/profile_photo_service.dart';
 import 'settings_screen.dart';
 
+/// Displays account details, verification badges, and profile actions.
 class ProfileScreen extends StatefulWidget {
+  /// Creates the profile page for [userProfile].
   const ProfileScreen({
     super.key,
     required this.userProfile,
@@ -21,6 +23,7 @@ class ProfileScreen extends StatefulWidget {
     this.onChangePhoto,
   });
 
+  /// Profile data for the currently signed-in account.
   final AppUserProfile userProfile;
 
   /// Override the badges derived from userProfile.verificationBadges if
@@ -28,9 +31,11 @@ class ProfileScreen extends StatefulWidget {
   /// account's real verification status.
   final List<String>? verificationBadgesOverride;
 
+  /// Optional avatar URL that takes precedence over the profile's stored photo.
   final String? avatarImageUrl;
 
   /// Optional overrides. Leave null to use the built-in pages.
+  /// Callbacks for replacing the default profile actions.
   final VoidCallback? onEditProfile;
   final VoidCallback? onEmergencyContacts;
   final VoidCallback? onSettings;
@@ -40,6 +45,7 @@ class ProfileScreen extends StatefulWidget {
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
+/// Resolves profile presentation values and handles profile-related actions.
 class _ProfileScreenState extends State<ProfileScreen> {
   bool _uploadingPhoto = false;
 
@@ -59,6 +65,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // NAVIGATION
   // ------------------------------------------------------------
 
+  /// Opens the edit screen or invokes the supplied custom edit callback.
   Future<void> _openEditProfile() async {
     if (widget.onEditProfile != null) {
       widget.onEditProfile!();
@@ -77,6 +84,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  /// Opens the photo picker unless a custom photo action was supplied.
   Future<void> _changePhoto() async {
     if (widget.onChangePhoto != null) {
       widget.onChangePhoto!();
