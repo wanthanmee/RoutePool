@@ -118,6 +118,14 @@ class _HubScreenState extends State<HubScreen> {
   static const double _maximumGuidanceAccuracyM = 35;
   static const double _offRouteThresholdM = 35;
   static const int _requiredOffRouteReadings = 3;
+  // GPS jitter filtering for the user's location marker.
+  static const double _maximumMarkerAccuracyM = 30;
+  static const double _stationarySpeedMps = 0.5;
+  static const Duration _maximumMarkerAge = Duration(seconds: 30);
+
+  DateTime _lastGoodFixAt = DateTime.fromMillisecondsSinceEpoch(0);
+  double _markerAccuracyM = 0;
+
   StreamSubscription<Position>? _positionStream;
   StreamSubscription<CompassEvent>? _compassStream;
   bool _hasCompassHeading = false;
@@ -375,6 +383,11 @@ class _HubScreenState extends State<HubScreen> {
       if (!mounted) return;
       setState(() {
         _myLocation = LatLng(position.latitude, position.longitude);
+        _markerAccuracyM = position.accuracy;
+
+        if (position.accuracy <= _maximumMarkerAccuracyM) {
+          _lastGoodFixAt = DateTime.now();
+        }
       });
       try {
         _mapController.move(_myLocation!, 15);
@@ -392,12 +405,29 @@ class _HubScreenState extends State<HubScreen> {
           ).listen(
             (Position position) {
               if (!mounted) return;
-              debugPrint(
-                '[HUB GPS] lat=${position.latitude}, lon=${position.longitude}, accuracy=${position.accuracy}m',
-              );
-              setState(() {
-                _myLocation = LatLng(position.latitude, position.longitude);
 
+              debugPrint(
+                '[HUB GPS] lat=${position.latitude}, '
+                'lon=${position.longitude}, '
+                'accuracy=${position.accuracy}m',
+              );
+
+              // Determine whether the marker should move.
+              final moveMarker = _isMarkerUpdate(position);
+
+              // Record the latest sufficiently accurate GPS reading.
+              if (position.accuracy <= _maximumMarkerAccuracyM) {
+                _lastGoodFixAt = DateTime.now();
+              }
+
+              setState(() {
+                if (moveMarker) {
+                  _myLocation = LatLng(position.latitude, position.longitude);
+
+                  _markerAccuracyM = position.accuracy;
+                }
+
+                // Preserve the existing compass functionality.
                 if (!_hasCompassHeading &&
                     position.speed > 0.8 &&
                     position.heading.isFinite &&
@@ -406,7 +436,12 @@ class _HubScreenState extends State<HubScreen> {
                   _heading = position.heading;
                 }
               });
-              _updateNearestHub();
+
+              if (moveMarker) {
+                _updateNearestHub();
+              }
+
+              // Walking navigation continues receiving GPS updates.
               _updateGuidance(position);
             },
             onError: (Object error) {
@@ -424,6 +459,40 @@ class _HubScreenState extends State<HubScreen> {
         _errorMessage = 'Unable to get your current location.';
       });
     }
+  }
+
+  // ------------------------------------------------------------
+  // GPS MARKER STABILITY FILTER
+  // ------------------------------------------------------------
+
+  bool _isMarkerUpdate(Position position) {
+    final current = _myLocation;
+
+    if (current == null) return true;
+
+    // Ignore inaccurate readings unless we have not received
+    // a sufficiently accurate reading for 30 seconds.
+    if (position.accuracy > _maximumMarkerAccuracyM) {
+      return DateTime.now().difference(_lastGoodFixAt) > _maximumMarkerAge;
+    }
+
+    // Calculate the distance between the displayed marker
+    // and the newly reported GPS position.
+    final moved = _distanceBetween(
+      current,
+      LatLng(position.latitude, position.longitude),
+    );
+
+    // Check whether the device reports that it is stationary.
+    final isStationary =
+        position.speed >= 0 && position.speed < _stationarySpeedMps;
+
+    // Ignore small coordinate changes caused by GPS uncertainty.
+    if (isStationary && moved < position.accuracy + _markerAccuracyM) {
+      return false;
+    }
+
+    return true;
   }
 
   // ------------------------------------------------------------

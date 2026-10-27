@@ -36,6 +36,12 @@ class _LiveTripMapState extends State<LiveTripMap> {
   // Current device GPS position.
   LatLng? _myPosition;
 
+  // GPS stability filtering.
+  static const double _maximumGpsAccuracyM = 30;
+  static const double _stationarySpeedMps = 0.5;
+
+  double _lastAcceptedAccuracyM = 0;
+
   List<LatLng> _routePoints = [];
 
   bool _mapReady = false;
@@ -94,6 +100,37 @@ class _LiveTripMapState extends State<LiveTripMap> {
       '[$_roleLabel] Map centered on initial GPS position: '
       '${_myPosition!.latitude}, ${_myPosition!.longitude}',
     );
+  }
+
+  bool _shouldAcceptGpsPosition(Position position) {
+    final current = _myPosition;
+
+    // Reject GPS readings with poor reported accuracy.
+    if (position.accuracy > _maximumGpsAccuracyM) {
+      return false;
+    }
+
+    // Accept the first sufficiently accurate position.
+    if (current == null) {
+      return true;
+    }
+
+    final distance = Geolocator.distanceBetween(
+      current.latitude,
+      current.longitude,
+      position.latitude,
+      position.longitude,
+    );
+
+    final isStationary =
+        position.speed >= 0 && position.speed < _stationarySpeedMps;
+
+    // Ignore small GPS jumps when the device reports that it is stationary.
+    if (isStationary && distance < position.accuracy + _lastAcceptedAccuracyM) {
+      return false;
+    }
+
+    return true;
   }
 
   // Start GPS tracking and request an initial position immediately.
@@ -167,6 +204,13 @@ class _LiveTripMapState extends State<LiveTripMap> {
           ).listen(
             (position) {
               _logPosition(position, 'STREAM');
+
+              if (!_shouldAcceptGpsPosition(position)) {
+                debugPrint('[$_roleLabel] GPS reading filtered.');
+                return;
+              }
+
+              _lastAcceptedAccuracyM = position.accuracy;
 
               final point = LatLng(position.latitude, position.longitude);
 
