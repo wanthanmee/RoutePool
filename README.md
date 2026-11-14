@@ -1,17 +1,1 @@
-# rp_login_signup
-
-A new Flutter project.
-
-## Getting Started
-
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+**RoutePool** is a Flutter-based carpooling application designed to provide affordable, convenient, and environmentally friendly transportation in Penang, Malaysia. The application connects passengers travelling in similar directions through intelligent ride matching, allowing them to share rides and split fares. Built with Flutter and Firebase, RoutePool features real-time GPS tracking, route optimization, automated fare calculation, driver verification, and safety features to improve the overall carpooling experience.
