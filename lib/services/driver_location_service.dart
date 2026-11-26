@@ -4,6 +4,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 
+// Service: DriverLocationService
+// --------------------------------------------------------------
+// Manages GPS tracking for drivers, including starting/stopping location updates,
+// uploading positions to Firestore, and handling heartbeat updates to maintain availability.
 class DriverLocationService {
   DriverLocationService._();
 
@@ -246,6 +250,20 @@ class DriverLocationService {
     }
 
     if (_uploading) return;
+
+    // Reject invalid or inaccurate GPS readings.
+    if (!position.accuracy.isFinite ||
+        position.accuracy < 0 ||
+        position.accuracy > 100 ||
+        !position.latitude.isFinite ||
+        !position.longitude.isFinite ||
+        position.latitude < -90 ||
+        position.latitude > 90 ||
+        position.longitude < -180 ||
+        position.longitude > 180) {
+      debugPrint('Driver GPS skipped: invalid or inaccurate position.');
+      return;
+    }
 
     final now = DateTime.now();
 

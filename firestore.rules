@@ -1,0 +1,1218 @@
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =====================================================
+    // SHARED SECURITY FUNCTIONS
+    // =====================================================
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && exists(
+          /databases/$(database)/documents/admins/$(request.auth.uid)
+        );
+    }
+
+    function validName() {
+      return request.resource.data.name is string
+        && request.resource.data.name.size() >= 2
+        && request.resource.data.name.size() <= 100;
+    }
+
+    // =====================================================
+    // PHASE 3: DRIVER AVAILABILITY SECURITY
+    // =====================================================
+
+    function vehicleApproved(uid) {
+      return exists(
+        /databases/$(database)/documents/vehicles/$(uid)
+      )
+        && get(
+          /databases/$(database)/documents/vehicles/$(uid)
+        ).data.driverId == uid
+        && get(
+          /databases/$(database)/documents/vehicles/$(uid)
+        ).data.verificationStatus == 'approved'
+        && get(
+          /databases/$(database)/documents/vehicles/$(uid)
+        ).data.isActive == true;
+    }
+
+    function ownerUserUpdate(uid) {
+      let changed = request.resource.data
+        .diff(resource.data).affectedKeys();
+
+      return isOwner(uid)
+        && changed.hasOnly([
+          'name',
+          'updatedAt',
+          'isAvailable'
+        ])
+        && request.resource.data.updatedAt == request.time
+        && validName()
+        && (
+          !changed.hasAny(['isAvailable'])
+          ||
+          (
+            resource.data.role == 'driver'
+            && request.resource.data.isAvailable is bool
+            && (
+              request.resource.data.isAvailable == false
+              ||
+              (
+                resource.data.verificationStatus == 'approved'
+                && vehicleApproved(uid)
+              )
+            )
+          )
+        );
+    }
+
+    function optionalDocumentString(value, maxLength) {
+      return value == null
+        || (value is string && value.size() <= maxLength);
+    }
+
+    // Client OCR and template-match values are submission metadata only.
+    // No authorization or verification-status decision relies on these values.
+    function validDocumentAttemptIncrement() {
+      return resource.data.get('documentSubmissionAttempts', null) is int
+        && request.resource.data.get('documentSubmissionAttempts', null) is int
+        && resource.data.documentSubmissionAttempts >= 0
+        && request.resource.data.documentSubmissionAttempts
+          == resource.data.documentSubmissionAttempts + 1
+        && request.resource.data.documentSubmissionAttempts <= 3;
+    }
+
+    function validIcPassportSubmission(uid) {
+      let changed = request.resource.data
+        .diff(resource.data).affectedKeys();
+      let role = resource.data.get('role', null);
+
+      return isOwner(uid)
+        && role in ['passenger', 'driver']
+        && resource.data.get('verificationStatus', null)
+          in ['pending', 'rejected']
+        && validDocumentAttemptIncrement()
+        && changed.hasOnly([
+          'icPassport',
+          'icOcrText',
+          'icNameMatches',
+          'icIdNumber',
+          'documentSubmissionAttempts',
+          'verificationStatus',
+          'rejectionReason',
+          'licenseUrl',
+          'licenseDocumentType',
+          'licenseTemplateMatches',
+          'licenseTemplateMatched',
+          'licenseOcrText',
+          'licenseNameMatches',
+          'licenseExpired',
+          'licenseExpiryDetected',
+          'licenseIdNumber'
+        ])
+        && request.resource.data.keys().hasAll([
+          'icPassport',
+          'icOcrText',
+          'icNameMatches',
+          'icIdNumber',
+          'documentSubmissionAttempts',
+          'verificationStatus'
+        ])
+        && request.resource.data.verificationStatus == 'pending'
+        && request.resource.data.get('rejectionReason', null) == null
+        && request.resource.data.icPassport is string
+        && request.resource.data.icPassport.size() > 0
+        && request.resource.data.icPassport.size() <= 2048
+        && request.resource.data.icOcrText is string
+        && request.resource.data.icOcrText.size() <= 20000
+        && request.resource.data.icNameMatches is bool
+        && optionalDocumentString(
+          request.resource.data.get('icIdNumber', null),
+          64
+        )
+        && (
+          (
+            role == 'passenger'
+            && changed.hasOnly([
+              'icPassport',
+              'icOcrText',
+              'icNameMatches',
+              'icIdNumber',
+              'documentSubmissionAttempts',
+              'verificationStatus',
+              'rejectionReason'
+            ])
+          )
+          ||
+          (
+            role == 'driver'
+            && request.resource.data.keys().hasAll([
+              'licenseUrl',
+              'licenseDocumentType',
+              'licenseTemplateMatches',
+              'licenseTemplateMatched',
+              'licenseOcrText',
+              'licenseNameMatches',
+              'licenseExpired',
+              'licenseExpiryDetected',
+              'licenseIdNumber'
+            ])
+            && request.resource.data.get('licenseUrl', '') == ''
+            && request.resource.data.get('licenseDocumentType', '') == ''
+            && request.resource.data.get('licenseTemplateMatches', 0) == 0
+            && request.resource.data.get('licenseTemplateMatched', false)
+              == false
+            && request.resource.data.get('licenseOcrText', '') == ''
+            && request.resource.data.get('licenseNameMatches', false)
+              == false
+            && request.resource.data.get('licenseExpired', false) == false
+            && request.resource.data.get('licenseExpiryDetected', null)
+              == null
+            && request.resource.data.get('licenseIdNumber', '') == ''
+          )
+        );
+    }
+
+    function validDriverLicenseSubmission(uid) {
+      let changed = request.resource.data
+        .diff(resource.data).affectedKeys();
+
+      return isOwner(uid)
+        && resource.data.get('role', null) == 'driver'
+        && resource.data.get('verificationStatus', null) == 'pending'
+        && resource.data.get('documentSubmissionAttempts', null) is int
+        && resource.data.documentSubmissionAttempts >= 1
+        && resource.data.documentSubmissionAttempts <= 3
+        && request.resource.data.documentSubmissionAttempts
+          == resource.data.documentSubmissionAttempts
+        && request.resource.data.verificationStatus
+          == resource.data.verificationStatus
+        && request.resource.data.get('icPassport', '') is string
+        && request.resource.data.icPassport.size() > 0
+        && resource.data.get('licenseUrl', '') == ''
+        && changed.hasOnly([
+          'licenseUrl',
+          'licenseDocumentType',
+          'licenseTemplateMatches',
+          'licenseTemplateMatched',
+          'licenseOcrText',
+          'licenseNameMatches',
+          'licenseExpired',
+          'licenseExpiryDetected',
+          'licenseIdNumber'
+        ])
+        && changed.hasAny(['licenseUrl'])
+        && request.resource.data.licenseUrl is string
+        && request.resource.data.licenseUrl.size() > 0
+        && request.resource.data.licenseUrl.size() <= 2048
+        && request.resource.data.licenseDocumentType is string
+        && request.resource.data.licenseDocumentType.size() <= 100
+        && request.resource.data.licenseTemplateMatches is int
+        && request.resource.data.licenseTemplateMatches >= 0
+        && request.resource.data.licenseTemplateMatched is bool
+        && request.resource.data.licenseOcrText is string
+        && request.resource.data.licenseOcrText.size() <= 20000
+        && request.resource.data.licenseNameMatches is bool
+        && request.resource.data.licenseExpired is bool
+        && optionalDocumentString(
+          request.resource.data.get('licenseExpiryDetected', null),
+          40
+        )
+        && optionalDocumentString(
+          request.resource.data.get('licenseIdNumber', null),
+          64
+        );
+    }
+
+    // =====================================================
+    // PHASE 3: VEHICLE REGISTRATION VALIDATION
+    // =====================================================
+
+    function validVehicleFields(uid) {
+      return request.resource.data.driverId == uid
+
+        && request.resource.data.vehicleMake is string
+        && request.resource.data.vehicleMake.size() >= 2
+        && request.resource.data.vehicleMake.size() <= 40
+
+        && request.resource.data.vehicleModel is string
+        && request.resource.data.vehicleModel.size() >= 2
+        && request.resource.data.vehicleModel.size() <= 40
+
+        && request.resource.data.vehicleColor is string
+        && request.resource.data.vehicleColor.size() >= 2
+        && request.resource.data.vehicleColor.size() <= 40
+
+        && request.resource.data.plateNumber is string
+        && request.resource.data.plateNumber.matches(
+          '^P[A-HJ-NP-Y]{0,2}[1-9][0-9]{0,3}$'
+        )
+
+        && request.resource.data.seatCapacity is int
+        && request.resource.data.seatCapacity >= 1
+        && request.resource.data.seatCapacity <= 12
+
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    function driverOwnsVehicle(uid) {
+      return isOwner(uid)
+        && exists(
+          /databases/$(database)/documents/users/$(uid)
+        )
+        && get(
+          /databases/$(database)/documents/users/$(uid)
+        ).data.role == 'driver';
+    }
+
+    function driverVehicleCreate(uid) {
+      return driverOwnsVehicle(uid)
+
+        && request.resource.data.keys().hasOnly([
+          'driverId',
+          'vehicleMake',
+          'vehicleModel',
+          'vehicleColor',
+          'plateNumber',
+          'seatCapacity',
+          'verificationStatus',
+          'isActive',
+          'createdAt',
+          'updatedAt',
+          'registrationDocumentUrl',
+          'registrationOcrText'
+        ])
+
+        && request.resource.data.keys().hasAll([
+          'driverId',
+          'vehicleMake',
+          'vehicleModel',
+          'vehicleColor',
+          'plateNumber',
+          'seatCapacity',
+          'verificationStatus',
+          'isActive',
+          'createdAt',
+          'updatedAt'
+        ])
+
+        && validVehicleFields(uid)
+
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.isActive == false
+
+        && request.resource.data.verificationStatus
+          in ['not_submitted', 'pending']
+
+        && (
+          request.resource.data.verificationStatus != 'pending'
+          ||
+          (
+            request.resource.data.get(
+              'registrationDocumentUrl', ''
+            ) is string
+            && request.resource.data.get(
+              'registrationDocumentUrl', ''
+            ).size() > 0
+          )
+        );
+    }
+
+    function driverVehicleUpdate(uid) {
+      let changed = request.resource.data
+        .diff(resource.data).affectedKeys();
+
+      let detailsChanged = changed.hasAny([
+        'vehicleMake',
+        'vehicleModel',
+        'vehicleColor',
+        'plateNumber',
+        'seatCapacity',
+        'registrationDocumentUrl',
+        'registrationOcrText'
+      ]);
+
+      return driverOwnsVehicle(uid)
+
+        && resource.data.driverId == uid
+
+        && changed.hasOnly([
+          'vehicleMake',
+          'vehicleModel',
+          'vehicleColor',
+          'plateNumber',
+          'seatCapacity',
+          'registrationDocumentUrl',
+          'registrationOcrText',
+          'verificationStatus',
+          'isActive',
+          'approvedAt',
+          'rejectionReason',
+          'updatedAt'
+        ])
+
+        && validVehicleFields(uid)
+
+        && (
+          (
+            !detailsChanged
+            && changed.hasOnly(['updatedAt'])
+          )
+          ||
+          (
+            detailsChanged
+            && request.resource.data.verificationStatus == 'pending'
+            && request.resource.data.isActive == false
+            && !('approvedAt' in request.resource.data)
+            && !('rejectionReason' in request.resource.data)
+          )
+        );
+    }
+
+    // =====================================================
+    // PHASE 4A: RIDE REQUEST SECURITY FUNCTIONS
+    // =====================================================
+
+    // Only approved passengers may create bookings.
+    function isApprovedPassenger() {
+      return signedIn()
+        && exists(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        )
+        && get(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        ).data.role == 'passenger'
+        && get(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        ).data.verificationStatus == 'approved';
+    }
+
+    // Validate pickup and destination coordinates.
+    function validRideCoordinates() {
+      return request.resource.data.pickupLat is number
+        && request.resource.data.pickupLon is number
+        && request.resource.data.dropoffLat is number
+        && request.resource.data.dropoffLon is number
+
+        && request.resource.data.pickupLat >= -90
+        && request.resource.data.pickupLat <= 90
+
+        && request.resource.data.pickupLon >= -180
+        && request.resource.data.pickupLon <= 180
+
+        && request.resource.data.dropoffLat >= -90
+        && request.resource.data.dropoffLat <= 90
+
+        && request.resource.data.dropoffLon >= -180
+        && request.resource.data.dropoffLon <= 180;
+    }
+
+    // Validate new ride requests created by Flutter.
+    function validRideRequestCreate() {
+      return isApprovedPassenger()
+
+        && request.resource.data.keys().hasOnly([
+          'passengerId',
+          'pickupHubId',
+          'pickupName',
+          'pickupAddress',
+          'pickupLat',
+          'pickupLon',
+          'dropoffAddress',
+          'dropoffLat',
+          'dropoffLon',
+          'departureTime',
+          'passengerCount',
+          'status',
+          'groupId',
+          'driverId',
+          'createdAt',
+          'updatedAt'
+        ])
+
+        && request.resource.data.keys().hasAll([
+          'passengerId',
+          'pickupHubId',
+          'pickupName',
+          'pickupAddress',
+          'pickupLat',
+          'pickupLon',
+          'dropoffAddress',
+          'dropoffLat',
+          'dropoffLon',
+          'departureTime',
+          'passengerCount',
+          'status',
+          'groupId',
+          'driverId',
+          'createdAt',
+          'updatedAt'
+        ])
+
+        // Passenger cannot impersonate another user.
+        && request.resource.data.passengerId == request.auth.uid
+
+        // Validate pickup information.
+        && request.resource.data.pickupHubId is string
+        && request.resource.data.pickupHubId.size() > 0
+        && request.resource.data.pickupHubId.size() <= 100
+
+        && request.resource.data.pickupName is string
+        && request.resource.data.pickupName.size() > 0
+        && request.resource.data.pickupName.size() <= 200
+
+        && request.resource.data.pickupAddress is string
+        && request.resource.data.pickupAddress.size() <= 500
+
+        // Validate destination.
+        && request.resource.data.dropoffAddress is string
+        && request.resource.data.dropoffAddress.size() > 0
+        && request.resource.data.dropoffAddress.size() <= 500
+
+        && validRideCoordinates()
+
+        // RoutePool supports up to 12 passengers per booking.
+        && request.resource.data.passengerCount is int
+        && request.resource.data.passengerCount >= 1
+        && request.resource.data.passengerCount <= 12
+
+        // New bookings must begin in searching status.
+        && request.resource.data.status == 'searching'
+
+        // Client cannot preassign a group or driver.
+        && request.resource.data.groupId == null
+        && request.resource.data.driverId == null
+
+        // Server timestamps are required.
+        && request.resource.data.departureTime == request.time
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    // Allow only the two passenger choices shown in
+    // ride_matching_screen.dart.
+    function validRideChoiceUpdate() {
+      let changed = request.resource.data
+        .diff(resource.data).affectedKeys();
+
+      return signedIn()
+
+        // Only the booking owner can choose.
+        && resource.data.passengerId == request.auth.uid
+
+        // Choice must be offered by the backend first.
+        && resource.data.status == 'awaiting_choice'
+        && resource.data.get('groupId', null) == null
+
+        && request.resource.data.updatedAt == request.time
+
+        && (
+          // OPTION 1: TRY A SOLO RIDE
+          (
+            changed.hasOnly([
+              'status',
+              'matchingChoice',
+              'updatedAt'
+            ])
+
+            && changed.hasAll([
+              'status',
+              'matchingChoice'
+            ])
+
+            && request.resource.data.status == 'solo_requested'
+            && request.resource.data.matchingChoice == 'solo'
+          )
+
+          ||
+
+          // OPTION 2: SEARCH AGAIN FOR FIVE MINUTES
+          (
+            changed.hasOnly([
+              'status',
+              'searchStartedAt',
+              'searchExpiresAt',
+              'groupSearchId',
+              'groupSearchExpiresAt',
+              'matchingChoice',
+              'updatedAt'
+            ])
+
+            && changed.hasAll([
+              'status',
+              'searchStartedAt',
+              'searchExpiresAt',
+              'matchingChoice'
+            ])
+
+            && request.resource.data.status == 'searching'
+            && request.resource.data.matchingChoice == 'shared'
+
+            // Previous group information must be cleared.
+            && request.resource.data.groupSearchId == null
+            && request.resource.data.groupSearchExpiresAt == null
+
+            // Validate the retry window.
+            && request.resource.data.searchStartedAt is timestamp
+            && request.resource.data.searchExpiresAt is timestamp
+
+            // Allow a small device-clock difference.
+            && request.resource.data.searchStartedAt
+              >= request.time - duration.value(2, 'm')
+
+            && request.resource.data.searchStartedAt
+              <= request.time + duration.value(2, 'm')
+
+            // The matching window must last exactly 5 minutes.
+            && request.resource.data.searchExpiresAt
+              == request.resource.data.searchStartedAt
+                + duration.value(5, 'm')
+          )
+        );
+    }
+
+    function validReviewPromptStateUpdate() {
+      let changed = request.resource.data
+        .diff(resource.data).affectedKeys();
+      let state = request.resource.data.get('reviewPromptState', null);
+
+      return signedIn()
+        && resource.data.passengerId == request.auth.uid
+        && resource.data.status in ['drop_off_confirmed', 'completed']
+        && resource.data.get('reviewPromptEligibleAt', null) != null
+        && resource.data.get('reviewPromptState', {}).get('status', '') != 'shown'
+        && changed.hasOnly(['reviewPromptState'])
+        && state is map
+        && (
+          (
+            state.get('status', '') == 'showing'
+            && state.keys().hasOnly(['status', 'claimId', 'claimedAt'])
+            && state.keys().hasAll(['status', 'claimId', 'claimedAt'])
+            && state.claimId is string
+            && state.claimedAt == request.time
+          )
+          ||
+          (
+            state.get('status', '') == 'shown'
+            && state.keys().hasOnly(['status', 'shownAt'])
+            && state.keys().hasAll(['status', 'shownAt'])
+            && state.shownAt == request.time
+          )
+          ||
+          (
+            state.get('status', '') == 'pending'
+            && state.keys().hasOnly(['status', 'updatedAt'])
+            && state.keys().hasAll(['status', 'updatedAt'])
+            && state.updatedAt == request.time
+          )
+        );
+    }
+
+    // =====================================================
+    // PHASE 2: ADMINISTRATOR AUTHORIZATION
+    // =====================================================
+
+    match /admins/{adminId} {
+      allow get: if isOwner(adminId);
+      allow list, create, update, delete: if false;
+    }
+
+    // =====================================================
+    // PHASE 1 + 2 + 3: USER ACCOUNTS
+    // =====================================================
+
+    match /users/{userId} {
+
+      allow create: if isOwner(userId)
+
+        && request.resource.data.keys().hasOnly([
+          'name',
+          'email',
+          'phoneNo',
+          'role',
+          'verificationStatus',
+          'phoneVerified',
+          'icPassport',
+          'documentSubmissionAttempts',
+          'profilePic',
+          'driverApproved',
+          'createdAt'
+        ])
+
+        && request.resource.data.keys().hasAll([
+          'name',
+          'email',
+          'phoneNo',
+          'role',
+          'verificationStatus',
+          'phoneVerified',
+          'icPassport',
+          'documentSubmissionAttempts',
+          'profilePic',
+          'createdAt'
+        ])
+
+        && validName()
+
+        && request.resource.data.role
+          in ['passenger', 'driver']
+
+        && request.resource.data.verificationStatus == 'pending'
+        && request.resource.data.phoneVerified == true
+
+        && request.auth.token.phone_number
+          == request.resource.data.phoneNo
+
+        && request.resource.data.documentSubmissionAttempts == 0
+        && request.resource.data.icPassport == ''
+        && request.resource.data.profilePic == ''
+
+        && request.resource.data.email
+          == request.auth.token.email
+
+        && request.resource.data.createdAt == request.time
+
+        && (
+          !('driverApproved' in request.resource.data)
+          || request.resource.data.driverApproved == false
+        );
+
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+
+      allow update: if ownerUserUpdate(userId)
+        || validIcPassportSubmission(userId)
+        || validDriverLicenseSubmission(userId)
+        ||
+        (
+          isAdmin()
+
+          && request.resource.data
+            .diff(resource.data)
+            .affectedKeys()
+            .hasOnly(['verificationStatus'])
+
+          && request.resource.data.verificationStatus
+            in ['approved', 'rejected']
+        );
+
+      allow delete: if false;
+
+      allow update: if isOwner(userId)
+        && request.resource.data
+          .diff(resource.data)
+          .affectedKeys()
+          .hasOnly(['emergencyContacts']);
+    }
+
+    // =====================================================
+    // PHASE 2 + 3: VEHICLE RECORDS
+    // =====================================================
+
+    match /vehicles/{vehicleId} {
+
+      allow get: if isOwner(vehicleId) || isAdmin();
+      allow list: if isAdmin();
+
+      allow create: if driverVehicleCreate(vehicleId);
+
+      allow update: if driverVehicleUpdate(vehicleId)
+        ||
+        (
+          isAdmin()
+
+          && request.resource.data
+            .diff(resource.data)
+            .affectedKeys()
+            .hasOnly([
+              'verificationStatus',
+              'isActive',
+              'approvedAt',
+              'rejectionReason',
+              'updatedAt'
+            ])
+
+          && (
+            (
+              request.resource.data.verificationStatus == 'approved'
+              && request.resource.data.isActive == true
+            )
+            ||
+            (
+              request.resource.data.verificationStatus == 'rejected'
+              && request.resource.data.isActive == false
+            )
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    // =====================================================
+    // PHASE 4A: RIDE REQUEST SECURITY
+    // =====================================================
+
+    match /ride_requests/{requestId} {
+
+      // Only approved passengers can create valid bookings.
+      allow create: if validRideRequestCreate();
+
+        // Passengers can read their own bookings.
+        // Assigned drivers can read bookings in their trips.
+        // Offered drivers can read bookings during an active offer.
+        // Administrators can read bookings.
+        allow get: if signedIn()
+        && (
+        resource.data.passengerId == request.auth.uid
+
+        || isAdmin()
+
+        || (
+            resource.data.get('groupId', null) is string
+
+            && exists(
+              /databases/$(database)/documents/trips/$(resource.data.groupId)
+            )
+
+            && request.auth.uid in get(
+              /databases/$(database)/documents/trips/$(resource.data.groupId)
+            ).data.get('passengerIds', [])
+
+            && requestId in get(
+              /databases/$(database)/documents/trips/$(resource.data.groupId)
+            ).data.get('requestIds', [])
+          )
+
+        || (
+            resource.data.get('groupId', null) is string
+
+            && exists(
+            /databases/$(database)/documents/trips/$(resource.data.groupId)
+            )
+
+            && requestId in get(
+            /databases/$(database)/documents/trips/$(resource.data.groupId)
+            ).data.get('requestIds', [])
+
+            && (
+            // Already assigned driver.
+            get(
+                /databases/$(database)/documents/trips/$(resource.data.groupId)
+            ).data.get('driverId', null) == request.auth.uid
+
+            ||
+
+            // Driver with a currently valid offer.
+            (
+                get(
+                /databases/$(database)/documents/trips/$(resource.data.groupId)
+                ).data.get('status', '') == 'matching_driver'
+
+                && get(
+                /databases/$(database)/documents/trips/$(resource.data.groupId)
+                ).data.get('offeredDriverId', null) == request.auth.uid
+
+                && get(
+                /databases/$(database)/documents/trips/$(resource.data.groupId)
+                ).data.get('offerExpiresAt', timestamp.date(1970, 1, 1))
+                > request.time
+            )
+            )
+        )
+        );
+
+      // Passenger queries must filter by their own passengerId.
+      allow list: if signedIn()
+        && (
+          resource.data.passengerId == request.auth.uid
+          || isAdmin()
+        );
+
+      // Only valid Solo/Search Again choices are allowed.
+      // All other client updates remain blocked.
+      allow update: if validRideChoiceUpdate()
+        || validReviewPromptStateUpdate();
+
+      // Booking cancellation is handled by Cloud Functions.
+      allow delete: if false;
+    }
+
+    
+    // =====================================================
+    // PHASE 4C: AUTHORIZED TRIP ACCESS SECURITY
+    // =====================================================
+
+    match /trips/{tripId} {
+
+      // Passengers can read trips they belong to.
+      // Assigned drivers can read their trips.
+      // Offered drivers can read trips offered to them.
+      // Administrators can read trips for management.
+      allow get: if signedIn()
+        && (
+          isAdmin()
+
+          || (
+            resource.data.get('passengerIds', []) is list
+            && request.auth.uid
+              in resource.data.get('passengerIds', [])
+          )
+
+          || resource.data.get('driverId', null)
+            == request.auth.uid
+
+          || (
+            resource.data.get('status', '') == 'matching_driver'
+            && resource.data.get('offeredDriverId', null)
+              == request.auth.uid
+          )
+        );
+
+      // Queries must be constrained to authorized trips.
+      // Firestore Security Rules are not query filters.
+
+      // PHASE 4C: Authorized trip queries.
+      allow list: if signedIn()
+        && (
+          isAdmin()
+
+          || request.auth.uid
+            in resource.data.get('passengerIds', [])
+
+          || resource.data.get('driverId', null)
+            == request.auth.uid
+
+          || (
+            resource.data.get('status', '') == 'matching_driver'
+            && resource.data.get('offeredDriverId', null)
+              == request.auth.uid
+          )
+        );
+
+      // Trip creation and lifecycle updates are
+      // server-controlled at this stage.
+
+      // PHASE 4D: LIVE GPS LOCATION SECURITY
+
+    match /live_locations/{userId} {
+
+    // Only authenticated participants can read live locations.
+    allow get, list: if signedIn()
+        && (
+        isAdmin()
+        || request.auth.uid == get(
+            /databases/$(database)/documents/trips/$(tripId)
+        ).data.get('driverId', null)
+        || request.auth.uid in get(
+            /databases/$(database)/documents/trips/$(tripId)
+        ).data.get('passengerIds', [])
+        );
+
+    // Participants may only publish their own GPS location.
+    allow create, update: if signedIn()
+        && request.auth.uid == userId
+
+        // Trip must exist and be active.
+        && exists(
+        /databases/$(database)/documents/trips/$(tripId)
+        )
+
+        && get(
+        /databases/$(database)/documents/trips/$(tripId)
+        ).data.status in [
+        'driver_assigned',
+        'driver_arrived',
+        'in_progress'
+        ]
+
+        // The user must belong to this trip.
+        && (
+        request.auth.uid == get(
+            /databases/$(database)/documents/trips/$(tripId)
+        ).data.get('driverId', null)
+        || request.auth.uid in get(
+            /databases/$(database)/documents/trips/$(tripId)
+        ).data.get('passengerIds', [])
+        )
+
+        // Restrict the allowed GPS document fields.
+        && request.resource.data.keys().hasOnly([
+        'userId',
+        'role',
+        'lat',
+        'lon',
+        'updatedAt'
+        ])
+
+        && request.resource.data.keys().hasAll([
+        'userId',
+        'role',
+        'lat',
+        'lon',
+        'updatedAt'
+        ])
+
+        && request.resource.data.userId == userId
+
+        // Prevent driver/passenger role impersonation.
+        && (
+        (
+            request.auth.uid == get(
+            /databases/$(database)/documents/trips/$(tripId)
+            ).data.get('driverId', null)
+            && request.resource.data.role == 'driver'
+        )
+        ||
+        (
+            request.auth.uid in get(
+            /databases/$(database)/documents/trips/$(tripId)
+            ).data.get('passengerIds', [])
+            && request.resource.data.role == 'passenger'
+        )
+        )
+
+        // Validate GPS coordinates.
+        && request.resource.data.lat is number
+        && request.resource.data.lon is number
+        && request.resource.data.lat >= -90
+        && request.resource.data.lat <= 90
+        && request.resource.data.lon >= -180
+        && request.resource.data.lon <= 180
+
+        // Require the Firebase server timestamp.
+        && request.resource.data.updatedAt == request.time;
+
+    allow delete: if false;
+    }
+      allow create, update, delete: if false;
+    }
+
+    // =====================================================
+    // REMAINING COLLECTIONS
+    // =====================================================
+
+    // Other collections remain blocked until their
+    // respective security rules have been implemented.
+
+    // Driver availability GPS.
+    match /driver_locations/{driverId} {
+
+    allow get: if request.auth != null
+        && (
+        request.auth.uid == driverId
+        || isAdmin()
+        );
+
+    allow list: if false;
+
+    allow create, update: if request.auth != null
+        && request.auth.uid == driverId
+
+        && exists(
+        /databases/$(database)/documents/users/$(driverId)
+        )
+
+        && get(
+        /databases/$(database)/documents/users/$(driverId)
+        ).data.get('role', '') == 'driver'
+
+        && get(
+        /databases/$(database)/documents/users/$(driverId)
+        ).data.get('verificationStatus', '') == 'approved'
+
+        && request.resource.data.keys().hasAll([
+        'lat', 'lon', 'accuracy', 'updatedAt'
+        ])
+
+        && request.resource.data.keys().hasOnly([
+        'lat', 'lon', 'accuracy', 'updatedAt'
+        ])
+
+        && request.resource.data.lat is number
+        && request.resource.data.lat >= -90
+        && request.resource.data.lat <= 90
+
+        && request.resource.data.lon is number
+        && request.resource.data.lon >= -180
+        && request.resource.data.lon <= 180
+
+        && request.resource.data.accuracy is number
+        && request.resource.data.accuracy >= 0
+        && request.resource.data.accuracy <= 100
+
+        && request.resource.data.updatedAt == request.time;
+
+    allow delete: if false;
+    }
+
+    // =====================================================
+    // DRIVER REVIEW SECURITY
+    // =====================================================
+
+    function canReadDriverReview(reviewId) {
+      return signedIn()
+        && (
+          isAdmin()
+          || (
+            resource != null
+            && (
+              resource.data.get('passengerId', '') == request.auth.uid
+              || resource.data.get('driverId', '') == request.auth.uid
+            )
+          )
+          || (
+            exists(
+              /databases/$(database)/documents/ride_requests/$(reviewId)
+            )
+            && get(
+              /databases/$(database)/documents/ride_requests/$(reviewId)
+            ).data.passengerId == request.auth.uid
+          )
+        );
+    }
+
+    function canListDriverReviews() {
+      return signedIn()
+        && (
+          isAdmin()
+          || resource.data.get('driverId', '') == request.auth.uid
+        );
+    }
+
+    function validDriverReviewCreate(reviewId) {
+      return signedIn()
+        && request.resource.data.keys().hasOnly([
+          'tripId',
+          'requestId',
+          'driverId',
+          'passengerId',
+          'rating',
+          'tags',
+          'comment',
+          'createdAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'tripId',
+          'requestId',
+          'driverId',
+          'passengerId',
+          'rating',
+          'tags',
+          'comment',
+          'createdAt'
+        ])
+        && reviewId == request.resource.data.requestId
+        && request.resource.data.passengerId == request.auth.uid
+        && request.resource.data.tripId is string
+        && request.resource.data.driverId is string
+        && request.resource.data.rating is int
+        && request.resource.data.rating >= 1
+        && request.resource.data.rating <= 5
+        && request.resource.data.comment is string
+        && request.resource.data.comment.size() <= 500
+        && request.resource.data.tags is list
+        && request.resource.data.tags.size() <= 5
+        && request.resource.data.createdAt == request.time
+        && exists(
+          /databases/$(database)/documents/ride_requests/$(reviewId)
+        )
+        && get(
+          /databases/$(database)/documents/ride_requests/$(reviewId)
+        ).data.passengerId == request.auth.uid
+        && get(
+          /databases/$(database)/documents/ride_requests/$(reviewId)
+        ).data.status in ['drop_off_confirmed', 'completed']
+        && get(
+          /databases/$(database)/documents/ride_requests/$(reviewId)
+        ).data.groupId == request.resource.data.tripId
+        && exists(
+          /databases/$(database)/documents/trips/$(request.resource.data.tripId)
+        )
+        && reviewId in get(
+          /databases/$(database)/documents/trips/$(request.resource.data.tripId)
+        ).data.get('requestIds', [])
+        && get(
+          /databases/$(database)/documents/trips/$(request.resource.data.tripId)
+        ).data.get('driverId', null) == request.resource.data.driverId
+        && request.resource.data.driverId != request.auth.uid;
+    }
+
+    match /reviews/{reviewId} {
+      allow get: if canReadDriverReview(reviewId);
+      allow list: if canListDriverReviews();
+      allow create: if validDriverReviewCreate(reviewId);
+      allow update, delete: if false;
+    }
+
+    match /sos_alerts/{alertId} {
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+          'userId',
+          'tripId',
+          'createdAt',
+          'location',
+          'locationAccuracyMeters'
+        ])
+        && request.resource.data.keys().hasAll([
+          'userId',
+          'tripId',
+          'createdAt',
+          'location',
+          'locationAccuracyMeters'
+        ])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.tripId is string
+        && request.resource.data.tripId.size() > 0
+        && request.resource.data.tripId.size() <= 1500
+        && request.resource.data.createdAt == request.time
+        && (
+          (
+            request.resource.data.location == null
+            && request.resource.data.locationAccuracyMeters == null
+          )
+          ||
+          (
+            request.resource.data.location is latlng
+            && request.resource.data.locationAccuracyMeters is number
+            && request.resource.data.locationAccuracyMeters >= 0
+          )
+        )
+        && exists(
+          /databases/$(database)/documents/trips/$(request.resource.data.tripId)
+        )
+        && (
+          get(
+            /databases/$(database)/documents/trips/$(request.resource.data.tripId)
+          ).data.get('driverId', null) == request.auth.uid
+          ||
+          (
+            get(
+              /databases/$(database)/documents/trips/$(request.resource.data.tripId)
+            ).data.get('passengerIds', []) is list
+            && request.auth.uid in get(
+              /databases/$(database)/documents/trips/$(request.resource.data.tripId)
+            ).data.get('passengerIds', [])
+          )
+        );
+
+      allow get, list, update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+  }
+}

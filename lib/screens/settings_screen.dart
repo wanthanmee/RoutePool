@@ -15,7 +15,7 @@ const Map<String, String> _languages = {
 };
 
 /// Preferences are stored in users/{uid}.settings as
-/// {notifications: bool, language: 'en' | 'ms' | 'zh'}.
+/// {language: 'en' | 'ms' | 'zh'}.
 class SettingsScreen extends StatefulWidget {
   /// Creates the settings page for the currently signed-in user.
   const SettingsScreen({super.key});
@@ -24,9 +24,8 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-/// Loads and persists the current user's notification and language settings.
+/// Loads and persists the current user's language setting.
 class _SettingsScreenState extends State<SettingsScreen> {
-  bool _notifications = true;
   String _language = 'en';
   bool _loading = true;
 
@@ -49,7 +48,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         final settings = doc.data()?['settings'];
 
         if (settings is Map) {
-          _notifications = settings['notifications'] as bool? ?? true;
           final lang = settings['language'] as String?;
           if (lang != null && _languages.containsKey(lang)) _language = lang;
         }
@@ -76,17 +74,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       debugPrint('Save settings error: $e');
       return false;
     }
-  }
-
-  Future<void> _toggleNotifications(bool value) async {
-    final previous = _notifications;
-    setState(() => _notifications = value); // optimistic
-
-    final ok = await _saveSettings({'notifications': value});
-    if (ok || !mounted) return;
-
-    setState(() => _notifications = previous);
-    _showMessage('Could not update notifications. Please try again.');
   }
 
   Future<void> _pickLanguage() async {
@@ -192,17 +179,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         value: _languages[_language],
                         onTap: _pickLanguage,
                       ),
-                      const _RowDivider(),
-                      _SettingsRow(
-                        icon: Icons.notifications_none,
-                        label: 'Notifications',
-                        trailing: Switch(
-                          value: _notifications,
-                          onChanged: _toggleNotifications,
-                          activeThumbColor: Colors.white,
-                          activeTrackColor: RPColors.teal,
-                        ),
-                      ),
                     ],
                   ),
                   const SizedBox(height: 20),
@@ -291,14 +267,12 @@ class _SettingsRow extends StatelessWidget {
     required this.icon,
     required this.label,
     this.value,
-    this.trailing,
     this.onTap,
   });
 
   final IconData icon;
   final String label;
   final String? value;
-  final Widget? trailing;
   final VoidCallback? onTap;
 
   @override
@@ -332,9 +306,7 @@ class _SettingsRow extends StatelessWidget {
                   ),
                 ),
               ),
-            if (trailing != null)
-              trailing!
-            else if (onTap != null)
+            if (onTap != null)
               const Icon(Icons.chevron_right, color: RPColors.textGrey),
           ],
         ),

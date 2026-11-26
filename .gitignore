@@ -82,6 +82,25 @@ ui-debug.log
 # Local backups
 /backup_code/
 
+
 # Temporary patches
 *.patch
 *.diff
+
+# Dependencies
+node_modules/
+
+# Temporary Firebase test configurations
+firebase,test.json
+firebase.test.json
+firestore.production-test.rules
+firestore.production-test.backup.rules
+
+# Local backup rules
+firestore.rules.backup
+
+# Local test output
+security-test-results.txt
+
+# Nested Dart generated cache folders
+**/.dart_tool/

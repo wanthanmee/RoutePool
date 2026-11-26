@@ -60,6 +60,7 @@ class DocumentTemplateMatcher {
     }
 
     // Create ORB feature detector.
+    // Configuration: 2000 features, scale factor 1.2, 8 pyramid levels.
     final orb = cv.ORB.create(nFeatures: 2000, scaleFactor: 1.2, nLevels: 8);
 
     // Detect features in uploaded image.
@@ -112,11 +113,14 @@ class DocumentTemplateMatcher {
       }
 
       // Match ORB descriptors using Hamming distance.
+      // Brute Force Matcher with KNN (k=2) for Lowe's ratio test.
       final matcher = cv.BFMatcher.create(
-        type: cv.NORM_HAMMING,
+        type: cv.NORM_HAMMING, // measure Hamming distance for binary descriptors
         crossCheck: false,
       );
 
+      // Perform KNN matching between uploaded and template descriptors.
+      // Tells BFMatcher to find the two best matches for each descriptor in the uploaded image.
       final matches = matcher.knnMatch(
         uploadedDescriptors,
         templateDescriptors,
@@ -126,6 +130,7 @@ class DocumentTemplateMatcher {
       int goodMatches = 0;
 
       // Lowe ratio test.
+      //Filters out ambiguous matches by comparing the distance of the best match to the second-best match.
       for (final pair in matches) {
         if (pair.length < 2) {
           continue;
@@ -134,6 +139,8 @@ class DocumentTemplateMatcher {
         final best = pair[0];
         final secondBest = pair[1];
 
+        // Lowe's ratio test: A match is considered good if the distance of the best match is
+        //significantly less than that of the second-best match.
         if (best.distance < loweRatio * secondBest.distance) {
           goodMatches++;
         }
@@ -142,6 +149,8 @@ class DocumentTemplateMatcher {
       // Calculate the percentage of uploaded features that matched.
       final int uploadedFeatureCount = uploadedDescriptors.rows;
 
+
+      // Calculate the match ratio as the number of good matches divided by the total number of uploaded features.
       final double matchRatio = uploadedFeatureCount > 0
           ? goodMatches / uploadedFeatureCount
           : 0.0;

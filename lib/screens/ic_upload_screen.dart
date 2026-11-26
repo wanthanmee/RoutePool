@@ -46,6 +46,7 @@ class _IcUploadScreenState extends State<IcUploadScreen> {
         'ic_scan_${DateTime.now().millisecondsSinceEpoch}.jpeg',
       );
 
+      // Document Scanner Plugin: Launches the native scanner interface.
       final success = await FlutterEdgeDetection.detectEdge(
         imagePath,
         canUseGallery: true,
@@ -174,6 +175,7 @@ class _IcUploadScreenState extends State<IcUploadScreen> {
       }
 
       // Run template matching on the normalized JPEG.
+      // Match the uploaded IC/passport image against known templates.
       final templateResult = await DocumentTemplateMatcher.matchDocument(
         imageBytes: normalizedBytes,
         allowedTemplates: [
@@ -182,6 +184,7 @@ class _IcUploadScreenState extends State<IcUploadScreen> {
         ],
       );
 
+      // Reject the submission if the document does not match any supported template.
       if (!templateResult.isMatch) {
         throw Exception(
           'The submitted document could not be identified as a '
@@ -248,9 +251,20 @@ class _IcUploadScreenState extends State<IcUploadScreen> {
           'icOcrText': result.extractedText,
           'icNameMatches': result.nameMatches,
           'icIdNumber': result.idNumberFound,
-          if (widget.role != 'driver') ...{
-            'documentSubmissionAttempts': FieldValue.increment(1),
-            'verificationStatus': 'pending',
+          'documentSubmissionAttempts': FieldValue.increment(1),
+          'verificationStatus': 'pending',
+          'rejectionReason': FieldValue.delete(),
+          if (widget.role == 'driver') ...{
+            // A driver submission attempt covers both the identity and license.
+            'licenseUrl': '',
+            'licenseDocumentType': '',
+            'licenseTemplateMatches': 0,
+            'licenseTemplateMatched': false,
+            'licenseOcrText': '',
+            'licenseNameMatches': false,
+            'licenseExpired': false,
+            'licenseExpiryDetected': null,
+            'licenseIdNumber': '',
           },
         });
       });

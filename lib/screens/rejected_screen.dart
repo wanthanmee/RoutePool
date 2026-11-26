@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../theme/app_theme.dart';
 import 'ic_upload_screen.dart';
@@ -33,7 +32,7 @@ class RejectedScreen extends StatefulWidget {
 class _RejectedScreenState extends State<RejectedScreen> {
   bool _isLoading = false;
 
-  /// Restarts document submission when allowed, otherwise returns to signup.
+  /// Restarts document submission when allowed, otherwise returns to role selection.
   Future<void> _handleTryAgain() async {
     setState(() => _isLoading = true);
 
@@ -43,14 +42,6 @@ class _RejectedScreenState extends State<RejectedScreen> {
       if (user != null &&
           widget.role != null &&
           widget.documentSubmissionAttempts < 3) {
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .update({
-              'verificationStatus': 'pending',
-              'rejectionReason': FieldValue.delete(),
-            });
-
         if (!mounted) return;
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => IcUploadScreen(role: widget.role!)),
@@ -60,11 +51,7 @@ class _RejectedScreenState extends State<RejectedScreen> {
       }
 
       if (user != null) {
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .delete();
-        await user.delete();
+        await FirebaseAuth.instance.signOut();
       }
     } catch (e) {
       await FirebaseAuth.instance.signOut();
@@ -167,7 +154,7 @@ class _RejectedScreenState extends State<RejectedScreen> {
                         Text(
                           widget.documentSubmissionAttempts < 3
                               ? 'Please submit clearer or corrected documents. You have ${3 - widget.documentSubmissionAttempts} resubmission${3 - widget.documentSubmissionAttempts == 1 ? '' : 's'} remaining.'
-                              : 'You have reached the document resubmission limit. Please register again with a new application.',
+                              : 'You have reached the document submission limit. Please contact support for help.',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             color: Colors.black54,
@@ -192,7 +179,7 @@ class _RejectedScreenState extends State<RejectedScreen> {
                                 : Text(
                                     widget.documentSubmissionAttempts < 3
                                         ? 'Resubmit Documents'
-                                        : 'Start New Application',
+                                        : 'Sign Out',
                                   ),
                           ),
                         ),

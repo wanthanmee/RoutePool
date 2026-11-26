@@ -7,6 +7,8 @@ import 'hub_screen.dart';
 import 'passenger_home.dart';
 import 'profile_screen.dart';
 import 'rides_screen.dart';
+import 'ride_review_prompt.dart';
+import 'wallet_screen.dart';
 
 /// Provides the main tab navigation and keeps the signed-in profile current.
 class MainShell extends StatefulWidget {
@@ -56,17 +58,38 @@ class _MainShellState extends State<MainShell> {
     switch (i) {
       case 0:
         return profile.isDriver
-            ? DriverDashboardScreen(driverName: profile.name)
-            : PassengerHomeScreen(userName: profile.name);
+            ? DriverDashboardScreen(
+                driverName: profile.name,
+                avatarImageUrl: profile.avatarUrl,
+              )
+            : PassengerHomeScreen(
+                userName: profile.name,
+                userId: profile.uid,
+                avatarImageUrl: profile.avatarUrl,
+                onFindRide: () {
+                  setState(() {
+                    _index = 2;
+                    _visited.add(2);
+                  });
+                },
+              );
       case 1:
-        return RidesScreen(isDriver: profile.isDriver);
+        return RidesScreen(
+          isDriver: profile.isDriver,
+          onOpenHubs: () {
+            setState(() {
+              _index = 2;
+              _visited.add(2);
+            });
+          },
+        );
       case 2:
         return HubScreen(
           isDriver: profile.isDriver,
           orsApiKey: const String.fromEnvironment('ORS_API_KEY'),
         );
       case 3:
-        return const _Placeholder('Wallet');
+        return WalletScreen(avatarImageUrl: profile.avatarUrl);
       default:
         return ProfileScreen(userProfile: profile);
     }
@@ -83,13 +106,18 @@ class _MainShellState extends State<MainShell> {
         final isDriver = profile.isDriver;
 
         return Scaffold(
-          body: IndexedStack(
-            index: _index,
+          body: Stack(
             children: [
-              for (int i = 0; i < 5; i++)
-                _visited.contains(i)
-                    ? _buildPage(i, profile)
-                    : const SizedBox.shrink(),
+              IndexedStack(
+                index: _index,
+                children: [
+                  for (int i = 0; i < 5; i++)
+                    _visited.contains(i)
+                        ? _buildPage(i, profile)
+                        : const SizedBox.shrink(),
+                ],
+              ),
+              if (!isDriver) RideReviewPrompt(passengerId: profile.uid),
             ],
           ),
           bottomNavigationBar: NavigationBarTheme(
@@ -155,17 +183,4 @@ class _MainShellState extends State<MainShell> {
       },
     );
   }
-}
-
-/// Displays a simple placeholder for a tab that is not implemented yet.
-class _Placeholder extends StatelessWidget {
-  const _Placeholder(this.title);
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(title)),
-    body: Center(child: Text(title)),
-  );
 }

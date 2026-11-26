@@ -923,8 +923,6 @@ class _HubScreenState extends State<HubScreen> {
         title: const Text('Nearby Bus Stops'),
         elevation: 0,
         scrolledUnderElevation: 0,
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
       ),
       resizeToAvoidBottomInset: true,
       body: Stack(

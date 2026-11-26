@@ -36,6 +36,7 @@ class _LicenseUploadScreenState extends State<LicenseUploadScreen> {
         'license_scan_${DateTime.now().millisecondsSinceEpoch}.jpeg',
       );
 
+      //Document Scanner Plugin: Launches the native scanner interface.
       final success = await FlutterEdgeDetection.detectEdge(
         imagePath,
         canUseGallery: true,
@@ -85,6 +86,7 @@ class _LicenseUploadScreenState extends State<LicenseUploadScreen> {
 
       final imageBytes = await _pickedImage!.readAsBytes();
 
+      // Match the uploaded license image against known templates.
       final templateResult = await DocumentTemplateMatcher.matchDocument(
         imageBytes: imageBytes,
         allowedTemplates: const [
@@ -145,8 +147,10 @@ class _LicenseUploadScreenState extends State<LicenseUploadScreen> {
           .doc(uid)
           .get();
 
+      // Retrieve the registered full name for OCR name matching.
       final registeredName = (userDoc.data()?['name'] ?? '') as String;
 
+      // Perform OCR and extract text from the uploaded license image.
       final result = await DocumentVerificationService.analyze(
         imageFile: _pickedImage!,
         registeredFullName: registeredName,
@@ -169,7 +173,7 @@ class _LicenseUploadScreenState extends State<LicenseUploadScreen> {
                 ?.toInt() ??
             0;
 
-        if (attempts >= 3) {
+        if (attempts < 1 || attempts > 3) {
           throw Exception('Document resubmission limit reached.');
         }
 
@@ -187,10 +191,6 @@ class _LicenseUploadScreenState extends State<LicenseUploadScreen> {
           'licenseExpired': result.isExpired,
           'licenseExpiryDetected': result.expiryDateFound?.toIso8601String(),
           'licenseIdNumber': result.idNumberFound,
-
-          // Submission
-          'documentSubmissionAttempts': FieldValue.increment(1),
-          'verificationStatus': 'pending',
         });
       });
 
