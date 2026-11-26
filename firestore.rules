@@ -1,4 +1,4 @@
-
+﻿
 rules_version = '2';
 
 service cloud.firestore {
@@ -849,7 +849,7 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    
+
     // =====================================================
     // PHASE 4C: AUTHORIZED TRIP ACCESS SECURITY
     // =====================================================

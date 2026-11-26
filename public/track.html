@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -92,7 +92,7 @@
     <h1>RoutePool Live Trip</h1>
 
     <p id="message" role="status">
-      Loading secure trip information…
+      Loading secure trip informationâ€¦
     </p>
 
     <section id="trip" hidden>
@@ -105,7 +105,7 @@
       <h2>Driver location</h2>
 
       <p id="location-status">
-        Waiting for the driver’s latest location…
+        Waiting for the driverâ€™s latest locationâ€¦
       </p>
 
       <iframe
@@ -139,7 +139,7 @@
     <p class="notice">
       This page is available to anyone with the link.
       Do not forward it unless you intend to share
-      this trip’s live location.
+      this tripâ€™s live location.
     </p>
 
   </main>
@@ -279,7 +279,7 @@
       if (connectionInterrupted) {
 
         updatedElement.textContent =
-          'Connection interrupted. Retrying shortly…';
+          'Connection interrupted. Retrying shortlyâ€¦';
 
         return;
 
@@ -318,7 +318,7 @@
       mapLink.removeAttribute('href');
 
       locationStatus.textContent =
-        'The driver’s location is not available yet. ' +
+        'The driverâ€™s location is not available yet. ' +
         'This page will check again shortly.';
 
       updatedElement.textContent = '';
@@ -407,7 +407,7 @@
       mapLink.hidden = false;
 
       locationStatus.textContent =
-        'Showing the driver’s latest reported location.';
+        'Showing the driverâ€™s latest reported location.';
 
     }
 
@@ -537,7 +537,7 @@
         if (!trip.hidden) {
 
           updatedElement.textContent =
-            'Connection interrupted. Retrying shortly…';
+            'Connection interrupted. Retrying shortlyâ€¦';
 
         } else {
 
@@ -588,7 +588,7 @@
 
       showUnavailable();
 
-      
+
     }
 
   </script>
