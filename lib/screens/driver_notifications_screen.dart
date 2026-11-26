@@ -30,16 +30,32 @@ class DriverNotificationsScreen extends StatefulWidget {
 
 class _DriverNotificationsScreenState extends State<DriverNotificationsScreen> {
   String _filter = 'All';
+
   final Set<String> _processingTripIds = <String>{};
+
   Timer? _offerTimer;
   DateTime _now = DateTime.now();
+
+  // Cached Firestore stream for driver trip offers.
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _tripsStream;
+
+  // Cached passenger information for each trip.
+  final Map<String, Future<List<Map<String, dynamic>>>> _passengerDetailsCache =
+      {};
 
   @override
   void initState() {
     super.initState();
+
+    // Create the Firestore stream only once.
+    _tripsStream = _getTrips();
+
+    // Update countdown timers every second.
     _offerTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
-        setState(() => _now = DateTime.now());
+        setState(() {
+          _now = DateTime.now();
+        });
       }
     });
   }
@@ -298,18 +314,8 @@ class _DriverNotificationsScreenState extends State<DriverNotificationsScreen> {
       appBar: AppBar(
         title: const Text(
           'Notifications',
-
-          style: TextStyle(
-            color: RPColors.textDark,
-
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
-
-        backgroundColor: RPColors.bg,
-
-        foregroundColor: RPColors.textDark,
-
         elevation: 0,
       ),
 
@@ -344,8 +350,7 @@ class _DriverNotificationsScreenState extends State<DriverNotificationsScreen> {
           }
 
           return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-            stream: _getTrips(),
-
+            stream: _tripsStream,
             builder: (context, snapshot) {
               if (snapshot.hasError) {
                 return Center(
@@ -613,12 +618,14 @@ class _DriverNotificationsScreenState extends State<DriverNotificationsScreen> {
                                       const SizedBox(height: 10),
 
                                       FutureBuilder<List<Map<String, dynamic>>>(
-                                        future: _getTripPassengerDetails(
-                                          List<String>.from(
-                                            data['requestIds'] ?? <String>[],
+                                        future: _passengerDetailsCache.putIfAbsent(
+                                          '${request.id}:${(data['requestIds'] as List<dynamic>? ?? []).join(',')}',
+                                          () => _getTripPassengerDetails(
+                                            List<String>.from(
+                                              data['requestIds'] ?? <String>[],
+                                            ),
                                           ),
                                         ),
-
                                         builder: (context, passengerSnapshot) {
                                           if (passengerSnapshot
                                                   .connectionState ==

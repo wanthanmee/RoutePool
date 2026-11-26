@@ -13,6 +13,9 @@ class OtpScreen extends StatefulWidget {
   final String phoneNumber;
   final String role;
   final String verificationId;
+
+  /// Firebase may omit the resend token on some platforms.
+  final int? resendToken;
   final String fullName;
   final String email;
   final String password;
@@ -22,6 +25,7 @@ class OtpScreen extends StatefulWidget {
     required this.phoneNumber,
     required this.role,
     required this.verificationId,
+    this.resendToken,
     required this.fullName,
     required this.email,
     required this.password,
@@ -58,6 +62,8 @@ class _OtpScreenState extends State<OtpScreen> {
 
   late String _currentVerificationId;
   int? _resendToken;
+  // Advanced when a resend attempt settles so its late callbacks are ignored.
+  int _resendRequestId = 0;
 
   // -----------------------------------------------------------
   // Resend OTP Cooldown
@@ -77,6 +83,7 @@ class _OtpScreenState extends State<OtpScreen> {
     super.initState();
 
     _currentVerificationId = widget.verificationId;
+    _resendToken = widget.resendToken;
 
     // Start cooldown immediately when OTP screen opens.
     _startCooldown();
@@ -157,6 +164,7 @@ class _OtpScreenState extends State<OtpScreen> {
 
     try {
       // Step 1: Create phone authentication credential.
+      // Use only the latest session confirmed by Firebase's codeSent callback.
       final phoneCredential = PhoneAuthProvider.credential(
         verificationId: _currentVerificationId,
         smsCode: otp,
@@ -261,75 +269,113 @@ class _OtpScreenState extends State<OtpScreen> {
       _errorText = null;
     });
 
+    final requestId = ++_resendRequestId;
+    final forceResendingToken = _resendToken;
+    debugPrint(
+      'Starting OTP resend request '
+      '(resend token available: ${forceResendingToken != null}).',
+    );
+
     try {
       await FirebaseAuth.instance.verifyPhoneNumber(
         phoneNumber: widget.phoneNumber,
         timeout: const Duration(seconds: 60),
 
         // Reuse Firebase resend token when available.
-        forceResendingToken: _resendToken,
+        forceResendingToken: forceResendingToken,
 
         // Automatic phone verification callback.
         verificationCompleted: (PhoneAuthCredential credential) {
-          debugPrint('Firebase automatically verified phone credentials.');
-
-          // Keep manual OTP entry for this registration flow.
+          if (requestId != _resendRequestId) return;
+          // Keep this registration flow on manual OTP entry.
+          debugPrint(
+            'Firebase automatically verified phone credentials during resend; '
+            'manual OTP entry remains enabled.',
+          );
         },
 
         // Called when Firebase rejects verification.
         verificationFailed: (FirebaseAuthException e) {
-          debugPrint('Resend OTP Error: ${e.code} - ${e.message}');
+          if (requestId != _resendRequestId) return;
+          _resendRequestId++;
+          debugPrint('Resend OTP failed: ${e.code} - ${e.message}');
 
           if (!mounted) return;
 
           setState(() {
             _isResending = false;
-            _errorText = e.message ?? 'Could not resend OTP.';
+            _errorText = _resendErrorMessage(e);
           });
         },
 
         // Called when Firebase accepts the new OTP request.
         codeSent: (String verificationId, int? resendToken) {
+          if (requestId != _resendRequestId) return;
+          // Only codeSent confirms a new session; retire this request's callbacks.
+          _resendRequestId++;
+          debugPrint(
+            'Firebase confirmed resend codeSent '
+            '(resend token available: ${resendToken != null}).',
+          );
+          debugPrint('Active verification session changed after resend.');
           if (!mounted) return;
 
           setState(() {
-            // Save the NEW verification ID.
             _currentVerificationId = verificationId;
 
-            // Save token for future resend requests.
-            _resendToken = resendToken;
+            // Some platforms omit a token; retain the latest one Firebase provided.
+            if (resendToken != null) {
+              _resendToken = resendToken;
+            }
 
             _isResending = false;
 
-            // Clear old OTP digits.
             for (final controller in _controllers) {
               controller.clear();
             }
           });
 
-          // Restart 30-second cooldown.
           _startCooldown();
 
-          debugPrint('New OTP requested successfully.');
-
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('A new OTP has been requested.')),
+            const SnackBar(
+              content: Text(
+                'Firebase accepted the new OTP request. Check your messages.',
+              ),
+            ),
           );
         },
 
         // Called when automatic code retrieval times out.
         codeAutoRetrievalTimeout: (String verificationId) {
+          if (requestId != _resendRequestId) return;
+          // End this request without replacing the active verification session.
+          _resendRequestId++;
+          debugPrint('Resend OTP auto-retrieval timed out.');
           if (!mounted) return;
 
-          setState(() {
-            _currentVerificationId = verificationId;
-            _isResending = false;
-          });
-
-          debugPrint('OTP auto-retrieval timed out.');
+          if (_isResending) {
+            setState(() {
+              _isResending = false;
+              _errorText = 'Could not confirm a new OTP. Please try again.';
+            });
+          }
         },
       );
+    } on FirebaseAuthException catch (e) {
+      if (requestId != _resendRequestId) return;
+      _resendRequestId++;
+      debugPrint('Resend OTP request failed: ${e.code} - ${e.message}');
+
+      if (!mounted) return;
+
+      setState(() {
+        _isResending = false;
+        _errorText = _resendErrorMessage(e);
+      });
     } catch (e) {
+      if (requestId != _resendRequestId) return;
+      _resendRequestId++;
       debugPrint('Resend OTP Exception: $e');
 
       if (!mounted) return;
@@ -339,6 +385,24 @@ class _OtpScreenState extends State<OtpScreen> {
         _errorText = 'Could not resend OTP. Please try again.';
       });
     }
+  }
+
+  String _resendErrorMessage(FirebaseAuthException e) {
+    return switch (e.code) {
+      'quota-exceeded' =>
+        'SMS quota exceeded. Please try again later or contact support.',
+      'too-many-requests' =>
+        'Too many verification attempts. Please wait before trying again.',
+      'invalid-phone-number' =>
+        'The phone number is invalid. Please return and correct it.',
+      'operation-not-allowed' =>
+        'Phone verification is not enabled. Please contact support.',
+      'billing-not-enabled' =>
+        'SMS verification is unavailable right now. Please try again later.',
+      'network-request-failed' =>
+        'Network error. Check your connection and try again.',
+      _ => e.message ?? 'Could not resend OTP. Please try again.',
+    };
   }
 
   // -----------------------------------------------------------

@@ -30,13 +30,14 @@ class DocumentVerificationResult {
 /// Provides functionality to analyze document images for text extraction, name matching,
 /// ID number detection, and expiration date checking using ML Kit's text recognition.
 class DocumentVerificationService {
+  //Initializes Google ML Kit's text recognizer for Latin script.
   static final TextRecognizer _recognizer = TextRecognizer(
     script: TextRecognitionScript.latin,
   );
 
   /// Function: analyze
   /// --------------------------------------------------------------
-  /// Analyzes the provided image file for text, checks if the extracted text matches
+  /// Main OCR Function and analyzes the provided image file for text, checks if the extracted text matches
   /// the registered full name,optionally checks for expiration date, and looks for an ID number.
   static Future<DocumentVerificationResult> analyze({
     required File imageFile,
@@ -48,6 +49,7 @@ class DocumentVerificationService {
       inputImage,
     );
 
+    // Extract the recognized text from the OCR result.
     final extractedText = recognizedText.text;
 
     final nameMatches = _checkNameMatch(extractedText, registeredFullName);
@@ -108,10 +110,12 @@ class DocumentVerificationService {
 
     if (nameTokens.isEmpty) return false;
 
+    // Count how many tokens from the registered name are found in the OCR text.
     final matchedCount = nameTokens
         .where((token) => normalizedOcr.contains(token))
         .length;
 
+    // Return true if at least half of the name tokens are found in the OCR text.
     return matchedCount >= (nameTokens.length / 2).ceil();
   }
 

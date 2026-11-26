@@ -1,6 +1,10 @@
 import 'package:cloud_functions/cloud_functions.dart';
 
+/// Class: DriverTripService
+/// --------------------------------------------------------------
 /// Performs driver trip operations through trusted backend functions.
+/// This service provides methods for drivers to accept or decline trips offered by the system.
+/// The operations are executed via Firebase Cloud Functions to ensure secure and atomic updates to trip and request data.
 class DriverTripService {
   DriverTripService({FirebaseFunctions? functions})
     : _functions =

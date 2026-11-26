@@ -74,17 +74,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String _formatPhoneNumber(String raw) {
     // Remove unnecessary spaces from the beginning and end.
     final trimmed = raw.trim();
+    final digits = trimmed.replaceAll(RegExp(r'\D'), '');
 
     // If the number already starts with '+', keep it unchanged.
-    if (trimmed.startsWith('+')) return trimmed;
+    if (trimmed.startsWith('+')) return '+$digits';
 
     // If the number starts with 0, replace the 0 with Malaysia's +60 code.
-    if (trimmed.startsWith('0')) {
-      return '+60${trimmed.substring(1)}';
+    if (digits.startsWith('0')) {
+      return '+60${digits.substring(1)}';
     }
 
     // Otherwise, add Malaysia's +60 country code.
-    return '+60$trimmed';
+    return '+60$digits';
   }
 
   /// Validates the registration form and starts phone verification.
@@ -135,6 +136,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     // Convert the phone number into the format required by Firebase.
     final formattedPhone = _formatPhoneNumber(_phoneController.text);
+    if (!RegExp(r'^\+[1-9]\d{1,14}$').hasMatch(formattedPhone)) {
+      setState(() {
+        _errorText =
+            'Please enter a valid phone number in international format.';
+      });
+      return;
+    }
 
     // -----------------------------------------------------------
     // Firebase Phone Verification
@@ -145,6 +153,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       //
       // The account and Firestore profile are created later,
       // after the user successfully completes OTP verification.
+      debugPrint('Starting Firebase phone verification request.');
       await FirebaseAuth.instance.verifyPhoneNumber(
         phoneNumber: formattedPhone,
 
@@ -156,22 +165,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
         // Called when Firebase cannot send the verification code.
         verificationFailed: (FirebaseAuthException e) {
+          debugPrint('Phone verification failed: ${e.code} - ${e.message}');
+          if (!mounted) return;
           setState(() {
             _isLoading = false;
 
-            // Display Firebase's error message if available.
-            _errorText = e.message ?? 'Phone verification failed.';
+            _errorText = _phoneVerificationErrorMessage(e);
           });
         },
 
         // Called when Firebase successfully sends the OTP.
         codeSent: (String verificationId, int? resendToken) {
+          debugPrint(
+            'Firebase confirmed initial codeSent '
+            '(resend token available: ${resendToken != null}).',
+          );
+          debugPrint('Initial verification session received.');
+          if (!mounted) return;
           // Stop showing the loading indicator.
           setState(() => _isLoading = false);
 
           // Make sure this screen still exists before navigating.
-          if (!mounted) return;
-
           // Navigate to the OTP verification screen.
           Navigator.of(context).push(
             MaterialPageRoute(
@@ -185,6 +199,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 // Pass the verification ID needed to verify the OTP.
                 verificationId: verificationId,
 
+                // A null token is supported on platforms that do not provide one.
+                resendToken: resendToken,
+
                 // Pass the user's registration details to the OTP screen.
                 fullName: _fullNameController.text.trim(),
                 email: _emailController.text.trim(),
@@ -195,15 +212,42 @@ class _RegisterScreenState extends State<RegisterScreen> {
         },
 
         // Called when Firebase's automatic OTP retrieval times out.
-        codeAutoRetrievalTimeout: (String verificationId) {},
+        codeAutoRetrievalTimeout: (String verificationId) {
+          debugPrint('Initial OTP auto-retrieval timed out.');
+        },
       );
+    } on FirebaseAuthException catch (e) {
+      debugPrint('Phone verification request failed: ${e.code} - ${e.message}');
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _errorText = _phoneVerificationErrorMessage(e);
+      });
     } catch (e) {
       // Handle unexpected errors during the registration process.
+      debugPrint('Phone verification request exception: $e');
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
         _errorText = 'Something went wrong. Please try again.';
       });
     }
+  }
+
+  String _phoneVerificationErrorMessage(FirebaseAuthException e) {
+    return switch (e.code) {
+      'quota-exceeded' =>
+        'SMS quota exceeded. Please try again later or contact support.',
+      'too-many-requests' =>
+        'Too many verification attempts. Please wait before trying again.',
+      'invalid-phone-number' =>
+        'Please enter a valid phone number in international format.',
+      'operation-not-allowed' =>
+        'Phone verification is not enabled. Please contact support.',
+      'billing-not-enabled' =>
+        'SMS verification is unavailable right now. Please try again later.',
+      _ => e.message ?? 'Phone verification failed. Please try again.',
+    };
   }
 
   /// Builds the registration screen.

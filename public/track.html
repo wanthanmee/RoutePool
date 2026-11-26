@@ -1,0 +1,597 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+
+  <title>RoutePool Live Trip Tracking</title>
+
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #172b2b;
+      background: #f2f7f6;
+    }
+
+    body {
+      margin: 0;
+      padding: 24px 16px;
+    }
+
+    main {
+      box-sizing: border-box;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 24px;
+      border: 1px solid #d6e4e1;
+      border-radius: 16px;
+      background: #fff;
+      box-shadow: 0 8px 32px rgb(22 61 57 / 8%);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      color: #087f75;
+      font-size: 24px;
+    }
+
+    h2 {
+      margin: 24px 0 8px;
+      font-size: 16px;
+    }
+
+    p {
+      line-height: 1.5;
+    }
+
+    #message {
+      color: #526565;
+    }
+
+    #map {
+      display: none;
+      width: 100%;
+      height: 340px;
+      border: 0;
+      border-radius: 12px;
+      background: #e8efed;
+    }
+
+    #destinations {
+      padding-left: 22px;
+      line-height: 1.6;
+    }
+
+    #expiry,
+    #updated {
+      color: #526565;
+      font-size: 13px;
+    }
+
+    #updated {
+      margin-top: 10px;
+    }
+
+    a {
+      color: #087f75;
+    }
+
+    .notice {
+      margin-top: 20px;
+      font-size: 13px;
+      color: #526565;
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+
+    <h1>RoutePool Live Trip</h1>
+
+    <p id="message" role="status">
+      Loading secure trip informationâ€¦
+    </p>
+
+    <section id="trip" hidden>
+
+      <p>
+        <strong>Pickup:</strong>
+        <span id="pickup"></span>
+      </p>
+
+      <h2>Driver location</h2>
+
+      <p id="location-status">
+        Waiting for the driverâ€™s latest locationâ€¦
+      </p>
+
+      <iframe
+        id="map"
+        title="Map showing the driver's latest reported location"
+        referrerpolicy="no-referrer">
+      </iframe>
+
+      <p>
+        <a
+          id="map-link"
+          hidden
+          rel="noopener noreferrer"
+          referrerpolicy="no-referrer"
+          target="_blank">
+          Open current location in OpenStreetMap
+        </a>
+      </p>
+
+      <!-- Live GPS timestamp -->
+      <p id="updated"></p>
+
+      <h2>Destinations</h2>
+
+      <ul id="destinations"></ul>
+
+      <p id="expiry"></p>
+
+    </section>
+
+    <p class="notice">
+      This page is available to anyone with the link.
+      Do not forward it unless you intend to share
+      this tripâ€™s live location.
+    </p>
+
+  </main>
+
+  <script>
+
+    // ============================================================
+    // ELEMENT REFERENCES
+    // ============================================================
+
+    const message = document.getElementById('message');
+
+    const trip = document.getElementById('trip');
+
+    const map = document.getElementById('map');
+
+    const mapLink = document.getElementById('map-link');
+
+    const updatedElement = document.getElementById('updated');
+
+    const locationStatus = document.getElementById('location-status');
+
+    const token = window.location.hash.slice(1);
+
+    let loading = false;
+
+    // Timestamp of the latest driver GPS reading.
+    let lastDriverLocationUpdate = null;
+
+    // Last coordinates displayed on the map.
+    let lastMapCoordinates = null;
+
+    // Whether the most recent API request failed.
+    let connectionInterrupted = false;
+
+    // Whether the tracking link is no longer valid.
+    let trackingUnavailable = false;
+
+
+    // ============================================================
+    // INVALID OR EXPIRED TRACKING LINK
+    // ============================================================
+
+    function showUnavailable() {
+
+      trackingUnavailable = true;
+
+      lastDriverLocationUpdate = null;
+
+      lastMapCoordinates = null;
+
+      connectionInterrupted = false;
+
+      message.textContent =
+        'This tracking link is invalid, expired, or the trip is no longer active.';
+
+      trip.hidden = true;
+
+      map.removeAttribute('src');
+
+      map.style.display = 'none';
+
+      mapLink.hidden = true;
+
+      mapLink.removeAttribute('href');
+
+      updatedElement.textContent = '';
+
+    }
+
+
+    // ============================================================
+    // FORMAT TRIP STATUS
+    // ============================================================
+
+    function formatStatus(status) {
+
+      return {
+
+        driver_assigned: 'Driver assigned',
+
+        driver_arrived: 'Driver arrived',
+
+        in_progress: 'Trip in progress'
+
+      }[status] || 'Trip active';
+
+    }
+
+
+    // ============================================================
+    // FORMAT GPS UPDATE AGE
+    // ============================================================
+
+    function formatLocationAge(timestamp) {
+
+      const elapsedSeconds = Math.max(
+        0,
+        Math.floor((Date.now() - timestamp) / 1000)
+      );
+
+      if (elapsedSeconds < 60) {
+
+        return (
+          'Last updated ' +
+          elapsedSeconds +
+          ' second' +
+          (elapsedSeconds === 1 ? '' : 's') +
+          ' ago'
+        );
+
+      }
+
+      const minutes = Math.floor(elapsedSeconds / 60);
+
+      return (
+        'Last updated ' +
+        minutes +
+        ' minute' +
+        (minutes === 1 ? '' : 's') +
+        ' ago'
+      );
+
+    }
+
+
+    // ============================================================
+    // UPDATE GPS TIMESTAMP EVERY SECOND
+    // ============================================================
+
+    function updateLocationAge() {
+
+      if (trackingUnavailable || trip.hidden) {
+        return;
+      }
+
+      if (connectionInterrupted) {
+
+        updatedElement.textContent =
+          'Connection interrupted. Retrying shortlyâ€¦';
+
+        return;
+
+      }
+
+      if (lastDriverLocationUpdate === null) {
+
+        updatedElement.textContent = '';
+
+        return;
+
+      }
+
+      updatedElement.textContent =
+        formatLocationAge(lastDriverLocationUpdate);
+
+    }
+
+
+    // ============================================================
+    // HIDE DRIVER LOCATION
+    // ============================================================
+
+    function hideDriverLocation() {
+
+      lastDriverLocationUpdate = null;
+
+      lastMapCoordinates = null;
+
+      map.removeAttribute('src');
+
+      map.style.display = 'none';
+
+      mapLink.hidden = true;
+
+      mapLink.removeAttribute('href');
+
+      locationStatus.textContent =
+        'The driverâ€™s location is not available yet. ' +
+        'This page will check again shortly.';
+
+      updatedElement.textContent = '';
+
+    }
+
+
+    // ============================================================
+    // DISPLAY DRIVER LOCATION
+    // ============================================================
+
+    function showDriverLocation(driverLocation) {
+
+      const { lat, lon, updatedAt } = driverLocation;
+
+      const latitude = Number(lat);
+
+      const longitude = Number(lon);
+
+      const timestamp = Date.parse(updatedAt);
+
+      // Reject invalid coordinates or timestamps.
+      if (
+        !Number.isFinite(latitude) ||
+        !Number.isFinite(longitude) ||
+        latitude < -90 ||
+        latitude > 90 ||
+        longitude < -180 ||
+        longitude > 180 ||
+        !Number.isFinite(timestamp)
+      ) {
+
+        hideDriverLocation();
+
+        return;
+
+      }
+
+      // Store the actual GPS timestamp returned by Firebase.
+      lastDriverLocationUpdate = timestamp;
+
+      // Update the displayed age immediately.
+      updateLocationAge();
+
+      const coordinates = `${latitude},${longitude}`;
+
+      // Only update the map when the driver's coordinates change.
+      // This prevents the iframe from reloading every 15 seconds
+      // while the driver is stationary.
+      if (lastMapCoordinates !== coordinates) {
+
+        const delta = 0.015;
+
+        const bounds = [
+
+          longitude - delta,
+
+          latitude - delta,
+
+          longitude + delta,
+
+          latitude + delta
+
+        ].join(',');
+
+        const mapUrl =
+          `https://www.openstreetmap.org/export/embed.html` +
+          `?bbox=${encodeURIComponent(bounds)}` +
+          `&layer=mapnik` +
+          `&marker=${encodeURIComponent(coordinates)}`;
+
+        map.src = mapUrl;
+
+        lastMapCoordinates = coordinates;
+
+      }
+
+      map.style.display = 'block';
+
+      mapLink.href =
+        `https://www.openstreetmap.org/` +
+        `?mlat=${encodeURIComponent(latitude)}` +
+        `&mlon=${encodeURIComponent(longitude)}` +
+        `#map=16/${latitude}/${longitude}`;
+
+      mapLink.hidden = false;
+
+      locationStatus.textContent =
+        'Showing the driverâ€™s latest reported location.';
+
+    }
+
+
+    // ============================================================
+    // FETCH PUBLIC TRIP TRACKING INFORMATION
+    // ============================================================
+
+    async function refreshTracking() {
+
+      if (
+        loading ||
+        trackingUnavailable ||
+        document.visibilityState === 'hidden'
+      ) {
+        return;
+      }
+
+      loading = true;
+
+      try {
+
+        const response = await fetch('/api/publicTripTracking', {
+
+          method: 'POST',
+
+          headers: {
+            'Content-Type': 'application/json'
+          },
+
+          cache: 'no-store',
+
+          referrerPolicy: 'no-referrer',
+
+          body: JSON.stringify({ token })
+
+        });
+
+
+        // Invalid, expired, or completed trip.
+        if (response.status === 404) {
+
+          showUnavailable();
+
+          return;
+
+        }
+
+        if (!response.ok) {
+
+          throw new Error('Tracking request failed');
+
+        }
+
+
+        const data = await response.json();
+
+        connectionInterrupted = false;
+
+        message.textContent = formatStatus(data.status);
+
+
+        // --------------------------------------------------------
+        // PICKUP
+        // --------------------------------------------------------
+
+        document.getElementById('pickup').textContent =
+          data.pickup || 'Not available';
+
+
+        // --------------------------------------------------------
+        // DESTINATIONS
+        // --------------------------------------------------------
+
+        const destinations =
+          document.getElementById('destinations');
+
+        destinations.replaceChildren();
+
+        for (const destination of data.destinations || []) {
+
+          const item = document.createElement('li');
+
+          item.textContent = destination;
+
+          destinations.appendChild(item);
+
+        }
+
+
+        // --------------------------------------------------------
+        // TRACKING LINK EXPIRATION
+        // --------------------------------------------------------
+
+        const expiry = new Date(data.expiresAt);
+
+        document.getElementById('expiry').textContent =
+          `Link expires ${expiry.toLocaleString()}. ` +
+          'It also stops working when the trip ends.';
+
+
+        // --------------------------------------------------------
+        // DRIVER GPS LOCATION
+        // --------------------------------------------------------
+
+        if (data.driverLocation) {
+
+          showDriverLocation(data.driverLocation);
+
+        } else {
+
+          hideDriverLocation();
+
+        }
+
+
+        trip.hidden = false;
+
+        updateLocationAge();
+
+      } catch (error) {
+
+        console.error('RoutePool tracking error:', error);
+
+        connectionInterrupted = true;
+
+        if (!trip.hidden) {
+
+          updatedElement.textContent =
+            'Connection interrupted. Retrying shortlyâ€¦';
+
+        } else {
+
+          message.textContent =
+            'Unable to load trip tracking. ' +
+            'Check your connection and try again.';
+
+        }
+
+      } finally {
+
+        loading = false;
+
+      }
+
+    }
+
+
+    // ============================================================
+    // START TRACKING
+    // ============================================================
+
+    if (token) {
+
+      // Fetch trip information immediately.
+      refreshTracking();
+
+      // Fetch new GPS data every 15 seconds.
+      window.setInterval(refreshTracking, 15000);
+
+      // Update "Last updated X seconds ago" every second.
+      window.setInterval(updateLocationAge, 1000);
+
+      // Refresh immediately when the viewer returns to the tab.
+      document.addEventListener('visibilitychange', () => {
+
+        if (document.visibilityState === 'visible') {
+
+          refreshTracking();
+
+          updateLocationAge();
+
+        }
+
+      });
+
+    } else {
+
+      showUnavailable();
+
+
+    }
+
+  </script>
+
+</body>
+</html>

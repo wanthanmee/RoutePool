@@ -1,0 +1,98 @@
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+
+match /admins/{adminId} {
+  allow read: if signedIn() &&
+    (request.auth.uid == adminId || isAdmin());
+
+  allow write: if false;
+}
+
+match /ride_requests/{requestId} {
+
+  // Passenger can create their own booking.
+  allow create: if signedIn()
+    && request.auth.uid == request.resource.data.passengerId
+    && request.resource.data.status == 'searching'
+    && request.resource.data.driverId == null
+    && request.resource.data.groupId == null
+    && request.resource.data.passengerCount is int
+    && request.resource.data.passengerCount >= 1
+    && request.resource.data.passengerCount <= 12
+    && !request.resource.data.keys().hasAny([
+      'fareShareSen',
+      'soloFareSen'
+    ]);
+
+  // Passenger can read their own booking.
+  // Admin can read bookings.
+  allow get: if signedIn()
+    && (request.auth.uid == resource.data.passengerId || isAdmin());
+
+  allow list: if false;
+
+  // Prevent direct booking modifications.
+  allow update, delete: if false;
+}
+
+    match /users/{userId} {
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.role in ['passenger', 'driver']
+        && request.resource.data.verificationStatus == 'pending'
+        && request.resource.data.phoneVerified == true
+        && request.auth.token.phone_number ==
+           request.resource.data.phoneNo
+        && request.resource.data.documentSubmissionAttempts == 0
+        && request.resource.data.icPassport == ''
+        && request.resource.data.profilePic == ''
+        && (
+          request.resource.data.role != 'driver' ||
+          request.resource.data.driverApproved == false
+        );
+
+      allow read: if signedIn() &&
+        (request.auth.uid == userId || isAdmin());
+
+      allow update: if isAdmin() &&
+        request.resource.data.diff(resource.data)
+          .affectedKeys().hasOnly(['verificationStatus']);
+
+      allow delete: if false;
+    }
+
+    match /vehicles/{vehicleId} {
+    allow read: if signedIn() &&
+        (request.auth.uid == vehicleId || isAdmin());
+
+    // Only administrators can approve or reject vehicles.
+    allow update: if isAdmin()
+        && request.resource.data.diff(resource.data)
+        .affectedKeys().hasOnly([
+            'verificationStatus',
+            'isActive',
+            'approvedAt',
+            'rejectionReason',
+            'updatedAt'
+        ])
+        && request.resource.data.verificationStatus
+        in ['approved', 'rejected'];
+
+    allow create, delete: if false;
+    }
+
+  }
+}

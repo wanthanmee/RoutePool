@@ -1,4 +1,7 @@
 {
+  "firestore": {
+    "rules":  "firestore.rules"
+  },
   "flutter": {
     "platforms": {
       "android": {
@@ -31,5 +34,56 @@
         "*.local"
       ]
     }
-  ]
+  ],
+  "hosting": {
+    "public": "public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/track",
+        "destination": "/track.html"
+      },
+      {
+        "source": "/api/publicTripTracking",
+        "function": {
+          "functionId": "getPublicTripTracking",
+          "region": "asia-southeast1"
+        }
+      }
+    ]
+  },
+  "emulators": {
+    "auth": {
+      "host": "127.0.0.1",
+      "port": 9199
+    },
+    "functions": {
+      "host": "127.0.0.1",
+      "port": 5101
+    },
+    "firestore": {
+      "host": "127.0.0.1",
+      "port": 8181
+    },
+    "hosting": {
+      "host": "127.0.0.1",
+      "port": 5100
+    },
+    "ui": {
+      "enabled": false
+    },
+    "hub": {
+      "host": "127.0.0.1",
+      "port": 4505
+    },
+    "logging": {
+      "host": "127.0.0.1",
+      "port": 4605
+    },
+    "singleProjectMode": true
+  }
 }

@@ -4,60 +4,27 @@ import 'package:flutter/material.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 
 import 'passenger_home.dart' show RPColors;
-
+import 'ride_history_screen.dart';
 import 'driver_notifications_screen.dart';
 import 'driver_ride_screen.dart';
+
 import '../services/driver_trip_service.dart';
 import '../services/driver_location_service.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
-/// Summary details for a ride request shown to a driver.
-class IncomingRideRequest {
-  const IncomingRideRequest({
-    required this.passengerName,
-    required this.fare,
-    required this.distanceKm,
-    required this.etaMinutes,
-    required this.pickup,
-    required this.dropoff,
-  });
-
-  final String passengerName;
-  final double fare;
-  final double distanceKm;
-  final int etaMinutes;
-  final String pickup;
-  final String dropoff;
-}
-
 /// Displays the driver's earnings, ride activity, and availability controls.
 class DriverDashboardScreen extends StatefulWidget {
-  /// Creates a dashboard with optional summary values and an incoming request.
+  /// Creates a dashboard for the current driver's live account data.
   const DriverDashboardScreen({
     super.key,
-    this.driverName = 'Alex',
-    this.todayEarnings = 142.50,
-    this.earningsChangePercent = 12,
-    this.averageRating = 4.9,
-    this.tripsToday = 12,
-    this.incomingRequest = const IncomingRideRequest(
-      passengerName: 'Sarah M.',
-      fare: 18.00,
-      distanceKm: 2.4,
-      etaMinutes: 14,
-      pickup: 'Georgetown',
-      dropoff: 'Queensbay Mall',
-    ),
+    required this.driverName,
+    this.avatarImageUrl,
   });
 
   final String driverName;
-  final double todayEarnings;
-  final int earningsChangePercent;
-  final double averageRating;
-  final int tripsToday;
-  final IncomingRideRequest? incomingRequest;
+  final String? avatarImageUrl;
 
   @override
   State<DriverDashboardScreen> createState() => _DriverDashboardScreenState();
@@ -71,6 +38,13 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   bool _isSyncingAvailability = false;
   bool? _latestFirestoreAvailability;
   bool _availabilitySyncPending = false;
+  DateTime _now = DateTime.now();
+  Timer? _offerCountdownTimer;
+
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _incomingRequests;
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _driverTrips;
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _driverReviews;
+  final Map<String, Future<String>> _tripDestinationCache = {};
 
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
   _availabilitySubscription;
@@ -78,6 +52,24 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _incomingRequests = _getIncomingRequests();
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    _driverTrips = uid == null
+        ? const Stream.empty()
+        : FirebaseFirestore.instance
+              .collection('trips')
+              .where('driverId', isEqualTo: uid)
+              .snapshots();
+    // Keep ratings scoped to this driver in the canonical reviews collection.
+    _driverReviews = uid == null
+        ? const Stream.empty()
+        : FirebaseFirestore.instance
+              .collection('reviews')
+              .where('driverId', isEqualTo: uid)
+              .snapshots();
+    _offerCountdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _now = DateTime.now());
+    });
     _listenToAvailability();
   }
 
@@ -195,6 +187,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
 
   @override
   void dispose() {
+    _offerCountdownTimer?.cancel();
     _availabilitySubscription?.cancel();
     super.dispose();
   }
@@ -368,9 +361,59 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
         .snapshots();
   }
 
+  bool _isOfferActive(Map<String, dynamic> data) {
+    final expiresAt = data['offerExpiresAt'];
+    return expiresAt is Timestamp && expiresAt.toDate().isAfter(_now);
+  }
+
+  String _remainingOfferTime(Map<String, dynamic> data) {
+    final expiresAt = data['offerExpiresAt'];
+    if (expiresAt is! Timestamp) return 'Offer expiry unavailable';
+    final seconds = expiresAt.toDate().difference(_now).inSeconds;
+    final remaining = seconds > 0 ? seconds : 0;
+    return 'Offer expires in 00:${remaining.toString().padLeft(2, '0')}';
+  }
+
+  Future<String> _getTripDestinations(Map<String, dynamic> trip) async {
+    final requestIds = (trip['requestIds'] as List<dynamic>? ?? const [])
+        .whereType<String>()
+        .toList();
+    if (requestIds.isEmpty) return 'Destination unavailable';
+
+    final requests = await Future.wait(
+      requestIds.map(
+        (id) => FirebaseFirestore.instance
+            .collection('ride_requests')
+            .doc(id)
+            .get(),
+      ),
+    );
+    final destinations = requests
+        .map((request) => request.data()?['dropoffAddress']?.toString().trim())
+        .whereType<String>()
+        .where((destination) => destination.isNotEmpty)
+        .toSet();
+    return destinations.isEmpty
+        ? 'Destination unavailable'
+        : destinations.join('\n');
+  }
+
+  Future<String> _tripDestinationsFor(
+    String tripId,
+    Map<String, dynamic> trip,
+  ) {
+    final requestIds = (trip['requestIds'] as List<dynamic>? ?? const [])
+        .whereType<String>()
+        .join(',');
+    return _tripDestinationCache.putIfAbsent(
+      '$tripId:$requestIds',
+      () => _getTripDestinations(trip),
+    );
+  }
+
   Widget _buildLiveIncomingRequests(BuildContext context) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: _getIncomingRequests(),
+      stream: _incomingRequests,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Card(
@@ -393,16 +436,14 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
         final allRequests = snapshot.data?.docs ?? [];
         final currentUserId = FirebaseAuth.instance.currentUser?.uid;
 
-        final requests = currentUserId == null
-            ? allRequests
-            : allRequests.where((request) {
-                final data = request.data();
-                final dismissedBy = List<String>.from(
-                  data['dismissedBy'] ?? <String>[],
-                );
-
-                return !dismissedBy.contains(currentUserId);
-              }).toList();
+        final requests = allRequests.where((request) {
+          final data = request.data();
+          final dismissedBy = List<String>.from(
+            data['dismissedBy'] ?? <String>[],
+          );
+          return _isOfferActive(data) &&
+              (currentUserId == null || !dismissedBy.contains(currentUserId));
+        }).toList();
 
         if (requests.isEmpty) {
           return Card(
@@ -439,320 +480,311 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
           );
         }
 
-        return Container(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.55,
-          ),
-          decoration: BoxDecoration(
-            color: RPColors.bg,
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: ListView(
-            shrinkWrap: true,
-            padding: const EdgeInsets.all(4),
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(8, 4, 8, 10),
-                child: Row(
-                  children: [
-                    const Expanded(
-                      child: Text(
-                        'Incoming Ride Requests',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: RPColors.textDark,
-                        ),
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(0, 4, 0, 10),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Incoming Ride Requests',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: RPColors.textDark,
                       ),
-                    ),
-                    CircleAvatar(
-                      radius: 14,
-                      backgroundColor: RPColors.teal,
-                      child: Text(
-                        '${requests.length}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              ...requests.map((request) {
-                final data = request.data();
-                final currentUserId = FirebaseAuth.instance.currentUser?.uid;
-
-                final viewedBy = List<String>.from(
-                  data['viewedBy'] ?? <String>[],
-                );
-
-                final isUnread =
-                    currentUserId != null && !viewedBy.contains(currentUserId);
-
-                final pickup =
-                    data['pickupName'] as String? ?? 'Unknown pickup';
-
-                final passengers =
-                    (data['totalPassengers'] as num?)?.toInt() ?? 1;
-
-                final fareSen = (data['totalFareSen'] as num?)?.toInt() ?? 0;
-
-                final fareText = 'RM ${(fareSen / 100).toStringAsFixed(2)}';
-
-                final dropoff = 'Trip with $passengers passenger(s)';
-
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  color: RPColors.cardBg,
-                  elevation: 3,
-                  clipBehavior: Clip.antiAlias,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    side: BorderSide(
-                      color: RPColors.orange.withValues(alpha: 0.7),
                     ),
                   ),
-                  child: InkWell(
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const DriverNotificationsScreen(),
-                        ),
-                      );
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                  CircleAvatar(
+                    radius: 14,
+                    backgroundColor: RPColors.teal,
+                    child: Text(
+                      '${requests.length}',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            ...requests.map((request) {
+              final data = request.data();
+              final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+
+              final viewedBy = List<String>.from(
+                data['viewedBy'] ?? <String>[],
+              );
+
+              final isUnread =
+                  currentUserId != null && !viewedBy.contains(currentUserId);
+
+              final pickup = data['pickupName'] as String? ?? 'Unknown pickup';
+
+              final passengers =
+                  (data['totalPassengers'] as num?)?.toInt() ?? 1;
+
+              final fareSen = (data['totalFareSen'] as num?)?.toInt() ?? 0;
+
+              final fareText = 'RM ${(fareSen / 100).toStringAsFixed(2)}';
+
+              return Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                color: RPColors.cardBg,
+                elevation: 3,
+                clipBehavior: Clip.antiAlias,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  side: BorderSide(
+                    color: RPColors.orange.withValues(alpha: 0.7),
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
                         children: [
-                          Row(
-                            children: [
-                              const CircleAvatar(
-                                backgroundColor: Color(0xFFE1F0EF),
-                                child: Icon(
-                                  Icons.local_taxi,
-                                  color: RPColors.teal,
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              const Expanded(
-                                child: Text(
-                                  'New Ride Request',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16,
-                                    color: RPColors.textDark,
-                                  ),
-                                ),
-                              ),
-                              if (isUnread)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 9,
-                                    vertical: 5,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFFFF1D6),
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: const Text(
-                                    'NEW',
-                                    style: TextStyle(
-                                      color: Color(0xFF9A6200),
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                            ],
+                          const CircleAvatar(
+                            backgroundColor: Color(0xFFE1F0EF),
+                            child: Icon(Icons.local_taxi, color: RPColors.teal),
                           ),
-                          const SizedBox(height: 18),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Icon(
-                                Icons.trip_origin,
-                                color: RPColors.teal,
-                                size: 20,
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
-                                      'PICKUP',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: RPColors.textGrey,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      pickup,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          const Padding(
-                            padding: EdgeInsets.only(left: 9),
-                            child: SizedBox(
-                              height: 22,
-                              child: VerticalDivider(
-                                color: RPColors.border,
-                                thickness: 2,
+                          const SizedBox(width: 10),
+                          const Expanded(
+                            child: Text(
+                              'New Ride Request',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                                color: RPColors.textDark,
                               ),
                             ),
                           ),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Icon(
-                                Icons.location_on,
-                                color: Colors.red,
-                                size: 20,
+                          if (isUnread)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 9,
+                                vertical: 5,
                               ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
-                                      'DESTINATION',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: RPColors.textGrey,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      dropoff,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFFF1D6),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: const Text(
+                                'NEW',
+                                style: TextStyle(
+                                  color: Color(0xFF9A6200),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _remainingOfferTime(data),
+                        style: const TextStyle(
+                          color: RPColors.orange,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(
+                            Icons.trip_origin,
+                            color: RPColors.teal,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'PICKUP',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: RPColors.textGrey,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  pickup,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Padding(
+                        padding: EdgeInsets.only(left: 9),
+                        child: SizedBox(
+                          height: 22,
+                          child: VerticalDivider(
+                            color: RPColors.border,
+                            thickness: 2,
+                          ),
+                        ),
+                      ),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(
+                            Icons.location_on,
+                            color: Colors.red,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'DESTINATION',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: RPColors.textGrey,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                FutureBuilder<String>(
+                                  future: _tripDestinationsFor(
+                                    request.id,
+                                    data,
+                                  ),
+                                  builder: (context, destinationSnapshot) {
+                                    final destination =
+                                        destinationSnapshot.data ??
+                                        (destinationSnapshot.hasError
+                                            ? 'Destination unavailable'
+                                            : 'Loading destination...');
+                                    return Text(
+                                      destination,
                                       style: const TextStyle(
                                         fontWeight: FontWeight.w600,
                                       ),
-                                    ),
-                                  ],
+                                    );
+                                  },
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                          const Divider(height: 26),
+                        ],
+                      ),
+                      const Divider(height: 26),
 
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // First row: Passenger count and fare.
-                              Row(
-                                children: [
-                                  const Icon(
-                                    Icons.people_outline,
-                                    size: 20,
-                                    color: RPColors.teal,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Expanded(
-                                    child: Text(
-                                      '$passengers passenger(s)',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
-                              ),
-
-                              const SizedBox(height: 10),
-
-                              // Second row: Departure time.
-                              const Row(
-                                children: [
-                                  Icon(
-                                    Icons.access_time,
-                                    size: 18,
-                                    color: RPColors.teal,
-                                  ),
-                                  SizedBox(width: 6),
-                                  Expanded(
-                                    child: Text(
-                                      'As Soon as Possible',
-                                      softWrap: true,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-
-                          const SizedBox(height: 16),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // First row: Passenger count and fare.
                           Row(
                             children: [
                               const Icon(
-                                Icons.payments_outlined,
+                                Icons.people_outline,
                                 size: 20,
                                 color: RPColors.teal,
                               ),
                               const SizedBox(width: 6),
-                              const Text('Total trip fare'),
-                              const Spacer(),
-                              Text(
-                                fareText,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: RPColors.teal,
+                              Expanded(
+                                child: Text(
+                                  '$passengers passenger(s)',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 16),
-                          Row(
+
+                          const SizedBox(height: 10),
+
+                          // Second row: Departure time.
+                          const Row(
                             children: [
-                              Expanded(
-                                child: OutlinedButton(
-                                  onPressed: () =>
-                                      _declineTrip(context, request.id),
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.red,
-                                    side: const BorderSide(color: Colors.red),
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 13,
-                                    ),
-                                  ),
-                                  child: const Text('Decline'),
-                                ),
+                              Icon(
+                                Icons.access_time,
+                                size: 18,
+                                color: RPColors.teal,
                               ),
-                              const SizedBox(width: 12),
+                              SizedBox(width: 6),
                               Expanded(
-                                child: ElevatedButton(
-                                  onPressed: () =>
-                                      _acceptTrip(context, request.id),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: RPColors.teal,
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 13,
-                                    ),
-                                  ),
-                                  child: const Text('Accept Ride'),
+                                child: Text(
+                                  'As Soon as Possible',
+                                  softWrap: true,
                                 ),
                               ),
                             ],
                           ),
                         ],
                       ),
-                    ),
+
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.payments_outlined,
+                            size: 20,
+                            color: RPColors.teal,
+                          ),
+                          const SizedBox(width: 6),
+                          const Text('Total trip fare'),
+                          const Spacer(),
+                          Text(
+                            fareText,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: RPColors.teal,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () =>
+                                  _declineTrip(context, request.id),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.red,
+                                side: const BorderSide(color: Colors.red),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 13,
+                                ),
+                              ),
+                              child: const Text('Decline'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () => _acceptTrip(context, request.id),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: RPColors.teal,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 13,
+                                ),
+                              ),
+                              child: const Text('Accept Ride'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                );
-              }),
-            ],
-          ),
+                ),
+              );
+            }),
+          ],
         );
       },
     );
@@ -833,51 +865,48 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
     return Scaffold(
       backgroundColor: RPColors.bg,
       body: SafeArea(
-        child: Stack(
-          children: [
-            SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 140),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildHeader(),
+              const SizedBox(height: 20),
+              _buildOnlineToggle(),
+              const SizedBox(height: 16),
+              _buildEarningsCard(),
+              const SizedBox(height: 16),
+              Row(
                 children: [
-                  _buildHeader(),
-                  const SizedBox(height: 20),
-                  _buildOnlineToggle(),
-                  const SizedBox(height: 16),
-                  _buildEarningsCard(),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(child: _buildRatingCard()),
-                      const SizedBox(width: 12),
-                      Expanded(child: _buildStatCard()),
-                      const SizedBox(width: 12),
-                      Expanded(child: _buildRideHistoryCard(context)),
-                    ],
-                  ),
+                  Expanded(child: _buildRatingCard()),
+                  const SizedBox(width: 12),
+                  Expanded(child: _buildStatCard()),
+                  const SizedBox(width: 12),
+                  Expanded(child: _buildRideHistoryCard(context)),
                 ],
               ),
-            ),
-            if (isOnline)
-              Positioned(
-                left: 20,
-                right: 20,
-                bottom: 20,
-                child: _buildLiveIncomingRequests(context),
-              ),
-          ],
+              if (isOnline) ...[
+                const SizedBox(height: 24),
+                _buildLiveIncomingRequests(context),
+              ],
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildHeader() {
+    final avatarUrl = widget.avatarImageUrl;
     return Row(
       children: [
         CircleAvatar(
           radius: 22,
           backgroundColor: RPColors.teal.withValues(alpha: 0.1),
-          child: const Icon(Icons.person, color: RPColors.teal),
+          backgroundImage: avatarUrl == null ? null : NetworkImage(avatarUrl),
+          child: avatarUrl == null
+              ? const Icon(Icons.person, color: RPColors.teal)
+              : null,
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -891,7 +920,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
           ),
         ),
         StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: isOnline ? _getIncomingRequests() : null,
+          stream: isOnline ? _incomingRequests : null,
           builder: (context, snapshot) {
             final currentUserId = FirebaseAuth.instance.currentUser?.uid;
             final allRequests = snapshot.data?.docs ?? [];
@@ -909,7 +938,8 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                     );
 
                     return !viewedBy.contains(currentUserId) &&
-                        !dismissedBy.contains(currentUserId);
+                        !dismissedBy.contains(currentUserId) &&
+                        _isOfferActive(data);
                   }).length;
 
             return InkWell(
@@ -1027,6 +1057,45 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
     );
   }
 
+  ({double todayFare, double yesterdayFare, int tripsToday}) _tripStats(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> trips,
+  ) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    var todayFare = 0.0;
+    var yesterdayFare = 0.0;
+    var tripsToday = 0;
+
+    for (final trip in trips) {
+      final data = trip.data();
+      if (data['status'] != 'completed') continue;
+      final completedAt = data['completedAt'];
+      if (completedAt is! Timestamp) continue;
+
+      final completedDate = completedAt.toDate();
+      final day = DateTime(
+        completedDate.year,
+        completedDate.month,
+        completedDate.day,
+      );
+      final fareSen = (data['totalFareSen'] as num?)?.toDouble() ?? 0;
+
+      if (day == today) {
+        todayFare += fareSen / 100;
+        tripsToday++;
+      } else if (day == yesterday) {
+        yesterdayFare += fareSen / 100;
+      }
+    }
+
+    return (
+      todayFare: todayFare,
+      yesterdayFare: yesterdayFare,
+      tripsToday: tripsToday,
+    );
+  }
+
   Widget _buildEarningsCard() {
     return Container(
       width: double.infinity,
@@ -1036,54 +1105,63 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: RPColors.border),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+      child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: _driverTrips,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return const Text('Unable to load today’s trip fares.');
+          }
+          if (!snapshot.hasData) {
+            return const LinearProgressIndicator(color: RPColors.teal);
+          }
+
+          final stats = _tripStats(snapshot.data!.docs);
+          final comparison = stats.yesterdayFare == 0
+              ? 'No completed fares yesterday'
+              : '${stats.todayFare >= stats.yesterdayFare ? '+' : ''}'
+                    '${((stats.todayFare - stats.yesterdayFare) / stats.yesterdayFare * 100).round()}% vs yesterday';
+          final comparisonColor = stats.todayFare >= stats.yesterdayFare
+              ? Colors.green
+              : RPColors.danger;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                "Tap to switch availability status",
-                style: TextStyle(fontSize: 11, color: RPColors.textGrey),
+                'Completed trip fares today',
+                style: TextStyle(fontSize: 13, color: RPColors.textGrey),
               ),
-              const Spacer(),
-              const Icon(Icons.trending_up, size: 14, color: Colors.green),
-            ],
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            "Today's earnings",
-            style: TextStyle(fontSize: 13, color: RPColors.textGrey),
-          ),
-          const SizedBox(height: 4),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                'RM${widget.todayEarnings.toStringAsFixed(2)}',
-                style: const TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w700,
-                  color: RPColors.textDark,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text(
-                    '+${widget.earningsChangePercent}% vs yesterday',
-                    softWrap: true,
+              const SizedBox(height: 4),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    'RM ${stats.todayFare.toStringAsFixed(2)}',
                     style: const TextStyle(
-                      fontSize: 11,
-                      color: Colors.green,
-                      fontWeight: FontWeight.w600,
+                      fontSize: 26,
+                      fontWeight: FontWeight.w700,
+                      color: RPColors.textDark,
                     ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        comparison,
+                        softWrap: true,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: comparisonColor,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
-          ),
-        ],
+          );
+        },
       ),
     );
   }
@@ -1096,21 +1174,48 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: RPColors.border),
       ),
-      child: Column(
-        children: [
-          const Icon(Icons.star, color: RPColors.orange, size: 20),
-          const SizedBox(height: 6),
-          Text(
-            '${widget.averageRating} ★',
-            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-          ),
-          const SizedBox(height: 2),
-          const Text(
-            'Average Rating',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 10, color: RPColors.textGrey),
-          ),
-        ],
+      child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: _driverReviews,
+        builder: (context, snapshot) {
+          // Ignore malformed review values when calculating the average.
+          final ratings = snapshot.data?.docs
+              .map((doc) => doc.data()['rating'])
+              .whereType<num>()
+              .toList();
+          final average = ratings == null || ratings.isEmpty
+              ? null
+              : ratings.fold<double>(
+                      0,
+                      (total, rating) => total + rating.toDouble(),
+                    ) /
+                    ratings.length;
+          return Column(
+            children: [
+              const Icon(Icons.star, color: RPColors.orange, size: 20),
+              const SizedBox(height: 6),
+              Text(
+                snapshot.hasError
+                    ? 'Unavailable'
+                    : !snapshot.hasData
+                    ? 'Loading'
+                    : average == null
+                    ? 'No ratings'
+                    : '${average.toStringAsFixed(1)} ★',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                snapshot.hasError ? 'Ratings unavailable' : 'Average Rating',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 10, color: RPColors.textGrey),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1123,21 +1228,32 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: RPColors.border),
       ),
-      child: Column(
-        children: [
-          const Icon(Icons.directions_car, color: RPColors.teal, size: 20),
-          const SizedBox(height: 6),
-          Text(
-            '${widget.tripsToday}',
-            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-          ),
-          const SizedBox(height: 2),
-          const Text(
-            'Trips Today',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 10, color: RPColors.textGrey),
-          ),
-        ],
+      child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: _driverTrips,
+        builder: (context, snapshot) {
+          final tripsToday = snapshot.hasData
+              ? _tripStats(snapshot.data!.docs).tripsToday
+              : null;
+          return Column(
+            children: [
+              const Icon(Icons.directions_car, color: RPColors.teal, size: 20),
+              const SizedBox(height: 6),
+              Text(
+                snapshot.hasError ? 'Error' : tripsToday?.toString() ?? '…',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                snapshot.hasError ? 'Trips unavailable' : 'Trips Today',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 10, color: RPColors.textGrey),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1145,12 +1261,10 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   Widget _buildRideHistoryCard(BuildContext context) {
     return InkWell(
       onTap: () {
-        // TODO: once driver_rideHistory.dart is added, replace with:
-        // Navigator.of(context).push(
-        //   MaterialPageRoute(builder: (_) => const DriverRideHistoryScreen()),
-        // );
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Ride History screen not added yet.')),
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => const RideHistoryScreen(isDriver: true),
+          ),
         );
       },
       borderRadius: BorderRadius.circular(14),

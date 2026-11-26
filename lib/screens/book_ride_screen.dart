@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'dart:async';
 
+import '../services/fare_calculator.dart';
 import '../services/ride_request_service.dart';
 
 import 'ride_matching_screen.dart';
@@ -45,6 +46,7 @@ class _BookRideScreenState extends State<BookRideScreen> {
   final TextEditingController _dropoffController = TextEditingController();
   double? _selectedDropoffLat;
   double? _selectedDropoffLon;
+  int? _estimatedSoloFareSen;
   final RideRequestService _rideRequestService = RideRequestService();
 
   Timer? _suggestionDebounce;
@@ -68,6 +70,7 @@ class _BookRideScreenState extends State<BookRideScreen> {
   void _onDropoffChanged(String value) {
     _selectedDropoffLat = null;
     _selectedDropoffLon = null;
+    _estimatedSoloFareSen = null;
 
     _suggestionDebounce?.cancel();
 
@@ -136,9 +139,23 @@ class _BookRideScreenState extends State<BookRideScreen> {
     _selectedDropoffLat = (suggestion['lat'] as num?)?.toDouble();
     _selectedDropoffLon = (suggestion['lon'] as num?)?.toDouble();
 
+    final dropoffLat = _selectedDropoffLat;
+    final dropoffLon = _selectedDropoffLon;
+    final estimatedSoloFareSen = dropoffLat == null || dropoffLon == null
+        ? null
+        : FareCalculator.soloFareSen(
+            FareCalculator.roadDistanceKm(
+              widget.pickupLat,
+              widget.pickupLon,
+              dropoffLat,
+              dropoffLon,
+            ),
+          );
+
     setState(() {
       _dropoffSuggestions = [];
       _isLoadingSuggestions = false;
+      _estimatedSoloFareSen = estimatedSoloFareSen;
     });
 
     FocusScope.of(context).unfocus();
@@ -406,18 +423,35 @@ class _BookRideScreenState extends State<BookRideScreen> {
               color: teal,
               borderRadius: BorderRadius.circular(16),
             ),
-            child: const Column(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Estimated Fare', style: TextStyle(color: Colors.white70)),
-                SizedBox(height: 6),
+                const Text(
+                  'Estimated Booking Fare',
+                  style: TextStyle(color: Colors.white70),
+                ),
+                const SizedBox(height: 6),
                 Text(
-                  'Calculating...',
-                  style: TextStyle(
+                  _estimatedSoloFareSen == null
+                      ? 'Select a destination'
+                      : FareCalculator.format(
+                          FareCalculator.bookingFareSen(
+                            _estimatedSoloFareSen!,
+                            _passengerCount,
+                          ),
+                        ),
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 22,
                     fontWeight: FontWeight.bold,
                   ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Estimated total for your selected passengers. '
+                  'A 20% discount applies if your booking is matched '
+                  'with another booking.',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
                 ),
               ],
             ),
